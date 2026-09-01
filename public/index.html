@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart AI Diet & Macro Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+  <!-- AUTH SCREEN (shown initially) -->
+  <div id="authScreen" class="auth-screen">
+    <div class="auth-container">
+      <div class="auth-card">
+        <div class="auth-logo">
+          <i class="fa-solid fa-utensils"></i>
+          <h1>NutriAI Tracker</h1>
+          <p>AI-Powered Diet & Nutrition Tracking</p>
+        </div>
+
+        <!-- Login Form -->
+        <form id="loginForm" class="auth-form">
+          <h2>Login</h2>
+          <div class="form-group">
+            <input type="email" id="loginEmail" placeholder="Email" required>
+          </div>
+          <div class="form-group">
+            <input type="password" id="loginPassword" placeholder="Password" required>
+          </div>
+          <button type="submit" class="btn-primary">Sign In</button>
+          <p class="auth-toggle">Don't have an account? <a href="#" id="toggleToSignup">Sign up</a></p>
+          <div id="loginError" class="error-message"></div>
+        </form>
+
+        <!-- Signup Form -->
+        <form id="signupForm" class="auth-form hidden">
+          <h2>Create Account</h2>
+          <div class="form-group">
+            <input type="text" id="signupUsername" placeholder="Username" required>
+          </div>
+          <div class="form-group">
+            <input type="email" id="signupEmail" placeholder="Email" required>
+          </div>
+          <div class="form-group">
+            <input type="password" id="signupPassword" placeholder="Password (min 6 chars)" required>
+          </div>
+          <button type="submit" class="btn-primary">Create Account</button>
+          <p class="auth-toggle">Already have an account? <a href="#" id="toggleToLogin">Sign in</a></p>
+          <div id="signupError" class="error-message"></div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN APP SCREEN (shown after login) -->
+  <div id="appScreen" class="app-screen hidden">
+
+  <header class="app-header">
+    <div class="logo">
+      <i class="fa-solid fa-utensils"></i>
+      <span>NutriAI Tracker</span>
+    </div>
+    <div class="header-actions">
+      <div class="target-container">
+        <label for="calorieGoalInput">Daily Calorie Target:</label>
+        <input type="number" id="calorieGoalInput" value="2000" min="500" max="10000" step="50">
+        <span>kcal</span>
+      </div>
+      <button type="button" id="settingsBtn" class="btn-icon" title="Settings">
+        <i class="fa-solid fa-gear"></i>
+      </button>
+      <button type="button" id="monthlyChartBtn" class="btn-monthly">
+        <i class="fa-solid fa-chart-line"></i> Monthly Chart
+      </button>
+      <button type="button" id="logoutBtn" class="btn-clear">
+        <i class="fa-solid fa-sign-out-alt"></i> Logout
+      </button>
+    </div>
+  </header>
+
+  <!-- SETTINGS/GOALS MODAL -->
+  <div class="modal-overlay hidden" id="settingsModalOverlay">
+    <div class="card modal-panel settings-modal">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-target"></i> Nutrition Goals</h3>
+        <button type="button" id="closeSettingsBtn" class="btn-close">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <form id="goalsForm" class="settings-form">
+        <div class="form-group">
+          <label for="targetCalories">Daily Calorie Target</label>
+          <input type="number" id="targetCalories" min="500" max="10000" step="50" value="2000">
+        </div>
+        <div class="form-group">
+          <label for="targetProtein">Daily Protein (g)</label>
+          <input type="number" id="targetProtein" min="0" max="500" step="1" value="150">
+        </div>
+        <div class="form-group">
+          <label for="targetCarbs">Daily Carbs (g)</label>
+          <input type="number" id="targetCarbs" min="0" max="500" step="1" value="250">
+        </div>
+        <div class="form-group">
+          <label for="targetFats">Daily Fats (g)</label>
+          <input type="number" id="targetFats" min="0" max="500" step="1" value="65">
+        </div>
+        <button type="submit" class="btn-primary">Save Goals</button>
+        <div id="goalsMessage" class="message"></div>
+      </form>
+    </div>
+  </div>
+
+  <main class="dashboard-grid single-column" id="dashboardGrid">
+    
+    <!-- LEFT PANEL: Meal Input Form -->
+    <section class="card input-card">
+      <h2><i class="fa-solid fa-camera"></i> Log Your Meal</h2>
+      <form id="mealForm">
+        
+        <div class="form-row">
+          <div class="form-group">
+            <label for="mealType"><i class="fa-regular fa-clock"></i> Meal Type</label>
+            <select id="mealType">
+              <option value="Breakfast">Breakfast</option>
+              <option value="Lunch">Lunch</option>
+              <option value="Dinner">Dinner</option>
+              <option value="Snack" selected>Snack</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="fitnessCategory"><i class="fa-solid fa-bullseye"></i> Dietary Goal</label>
+            <select id="fitnessCategory">
+              <option value="Muscle Gain / Hypertrophy">Muscle Gain / Bulking</option>
+              <option value="Fat Loss / Caloric Deficit">Fat Loss / Deficit</option>
+              <option value="Maintenance & Energy" selected>Maintenance & Energy</option>
+              <option value="Keto / Low Carb">Keto / Low Carb</option>
+              <option value="Endurance Athletics">Endurance Athletics</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label><i class="fa-solid fa-image"></i> Meal Image (Optional)</label>
+          <div class="upload-box" id="uploadBox">
+            <input type="file" id="imageInput" accept="image/*">
+            <div class="upload-placeholder" id="uploadPlaceholder">
+              <i class="fa-solid fa-cloud-arrow-up"></i>
+              <p>Click or drag image here</p>
+            </div>
+            <div class="preview-box hidden" id="previewBox">
+              <img id="imagePreview" src="" alt="Meal preview">
+              <button type="button" id="removeImgBtn" class="btn-icon"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="textInput"><i class="fa-solid fa-pen"></i> Description / Ingredients</label>
+          <textarea id="textInput" rows="3" placeholder="e.g., Grilled chicken breast with 1 cup brown rice and steamed broccoli"></textarea>
+        </div>
+
+        <button type="submit" id="submitBtn" class="btn-primary">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> Analyze & Log Meal
+        </button>
+
+      </form>
+    </section>
+
+    <!-- RIGHT PANEL: Dashboard & Daily Summary (revealed after the first analysis) -->
+    <section class="dashboard-panel hidden" id="dashboardPanel">
+
+      <!-- Calorie Progress Banner -->
+      <div class="card summary-card">
+        <div class="summary-header">
+          <h3>Daily Calorie Budget</h3>
+          <span id="calorieCountText">0 / 2000 kcal</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div id="calorieProgressBar" class="progress-bar-fill" style="width: 0%;"></div>
+        </div>
+      </div>
+
+      <!-- Macro Stats Grid & Chart -->
+      <div class="card chart-card">
+        <h3><i class="fa-solid fa-chart-pie"></i> Daily Macro Breakdown</h3>
+        <div class="chart-layout">
+          <div class="chart-container">
+            <canvas id="macroChart"></canvas>
+          </div>
+          <div class="macro-stats">
+            <div class="macro-item protein">
+              <span class="label">Protein</span>
+              <span class="value" id="totalProtein">0g</span>
+            </div>
+            <div class="macro-item carbs">
+              <span class="label">Carbs</span>
+              <span class="value" id="totalCarbs">0g</span>
+            </div>
+            <div class="macro-item fats">
+              <span class="label">Fats</span>
+              <span class="value" id="totalFats">0g</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Latest Analysis Result Box -->
+      <div id="latestResultCard" class="card result-card hidden">
+        <div class="result-header">
+          <h3 id="resultMealName">Meal Name</h3>
+          <span id="resultScoreBadge" class="badge">Efficiency</span>
+        </div>
+
+        <!-- Multi-item Plate Breakdown -->
+        <div id="plateItemsContainer" class="plate-items-container hidden">
+          <h4 class="plate-items-title">
+            <i class="fa-solid fa-list-ul"></i> Detected Plate Breakdown:
+          </h4>
+          <ul id="plateItemsList" class="plate-items-list">
+            <!-- Items dynamically populated by app.js -->
+          </ul>
+        </div>
+
+        <p id="resultAdvice" class="advice-text"></p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MONTHLY CHART MODAL: opened via the header button -->
+  <div class="modal-overlay hidden" id="monthlyModalOverlay">
+    <div class="card chart-card modal-panel" id="monthlyPanel">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-chart-line"></i> 30-Day Calorie Trends</h3>
+        <button type="button" id="closeMonthlyBtn" class="btn-close">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="monthly-chart-container" style="position: relative; height: 320px; width: 100%;">
+        <canvas id="monthlyChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- TODAY'S MEAL HISTORY TABLE -->
+  <section class="card history-section">
+    <div class="history-header">
+      <h2><i class="fa-solid fa-list-check"></i> Today's Logged Meals</h2>
+      <button type="button" id="clearAllBtn" class="btn-clear">
+        <i class="fa-solid fa-trash"></i> Clear All History
+      </button>
+    </div>
+
+    <div class="table-responsive">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Type</th>
+            <th>Meal</th>
+            <th>Calories</th>
+            <th>Protein</th>
+            <th>Carbs</th>
+            <th>Fats</th>
+            <th>Goal Alignment</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="historyTableBody">
+          <tr>
+            <td colspan="9" class="text-center">Loading meal history...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  </div><!-- End of appScreen -->
+
+  <script src="app.js"></script>
+</body>
+</html>

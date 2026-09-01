@@ -1,0 +1,10 @@
+diet_app_creation/
+├── package.json
+├── .env
+├── .gitignore
+├── db.js
+├── server.js
+└── public/
+    ├── index.html
+    ├── style.css
+    └── app.js
