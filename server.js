@@ -16,11 +16,19 @@ import {
 import { generateToken, formatUserResponse, sanitizeInput } from './authUtils.js';
 
 dotenv.config();
+const cors = require('cors');
+
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
 
 // Middleware
 app.use(express.json({ limit: '10mb' }));
