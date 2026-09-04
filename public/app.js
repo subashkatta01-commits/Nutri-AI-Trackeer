@@ -3,6 +3,8 @@
  * Includes authentication, meal logging, and nutrition tracking
  */
 
+const API_URL = 'https://nutri-ai-trackeer.onrender.com';
+
 let chartInstance = null;
 let currentBase64Image = null;
 let currentUser = null;
@@ -71,7 +73,7 @@ async function handleLogin(e) {
   const errorDiv = document.getElementById('loginError');
 
   try {
-    const response = await fetch('/api/auth/login', {
+    const response = await fetch(`${API_URL}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password })
@@ -110,7 +112,7 @@ async function handleSignup(e) {
   const errorDiv = document.getElementById('signupError');
 
   try {
-    const response = await fetch('/api/auth/signup', {
+    const response = await fetch(`${API_URL}/api/auth/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, email, password })
@@ -153,7 +155,7 @@ function handleLogout() {
 
 async function loadNutritionGoals() {
   try {
-    const response = await fetch('/api/goals', {
+    const response = await fetch(`${API_URL}/api/goals`, {
       headers: { 'Authorization': `Bearer ${authToken}` }
     });
 
@@ -196,7 +198,7 @@ async function handleSaveGoals(e) {
   };
 
   try {
-    const response = await fetch('/api/goals', {
+    const response = await fetch(`${API_URL}/api/goals`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -370,7 +372,7 @@ async function handleFormSubmit(e) {
   submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Analyzing...';
 
   try {
-    const response = await fetch('/api/analyze-meal', {
+    const response = await fetch(`${API_URL}/api/analyze-meal`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -455,7 +457,7 @@ function displayAnalysisResult(data) {
 
 async function loadDailyData() {
   try {
-    const response = await fetch('/api/daily-history', {
+    const response = await fetch(`${API_URL}/api/daily-history`, {
       headers: { 'Authorization': `Bearer ${authToken}` }
     });
 
@@ -550,7 +552,7 @@ async function deleteMeal(id) {
   if (!confirm('Delete this meal log?')) return;
 
   try {
-    const response = await fetch(`/api/logs/${id}`, {
+    const response = await fetch(`${API_URL}/api/logs/${id}`, {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${authToken}` }
     });
@@ -569,7 +571,7 @@ async function handleClearAll() {
   if (!confirm('Delete ALL meal logs? This cannot be undone.')) return;
 
   try {
-    const response = await fetch('/api/daily-history', {
+    const response = await fetch(`${API_URL}/api/daily-history`, {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${authToken}` }
     });
@@ -604,7 +606,7 @@ function closeMonthlyModal() {
 
 async function fetchMonthlyData() {
   try {
-    const response = await fetch('/api/monthly-history', {
+    const response = await fetch(`${API_URL}/api/monthly-history`, {
       headers: { 'Authorization': `Bearer ${authToken}` }
     });
 
