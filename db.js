@@ -165,10 +165,10 @@ export function updateNutritionGoals(userId, goals) {
   `);
   
   return stmt.run(
-    goals.dailyCalorieTarget || 2000,
-    goals.dailyProteinTarget || 150,
-    goals.dailyCarbsTarget || 250,
-    goals.dailyFatsTarget || 65,
+    goals.dailyCalorieTarget ?? 2000,
+    goals.dailyProteinTarget ?? 150,
+    goals.dailyCarbsTarget ?? 250,
+    goals.dailyFatsTarget ?? 65,
     userId
   );
 }

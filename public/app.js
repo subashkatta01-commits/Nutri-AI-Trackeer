@@ -3,7 +3,7 @@
  * Includes authentication, meal logging, and nutrition tracking
  */
 
-const API_URL = 'https://nutri-ai-trackeer.onrender.com';
+const API_URL = window.location.origin;
 
 let chartInstance = null;
 let currentBase64Image = null;

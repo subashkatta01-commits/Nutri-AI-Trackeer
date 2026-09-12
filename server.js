@@ -1,6 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
+import cors from 'cors';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import { 
@@ -16,7 +17,7 @@ import {
 import { generateToken, formatUserResponse, sanitizeInput } from './authUtils.js';
 
 dotenv.config();
-const cors = require('cors');
+
 
 
 
