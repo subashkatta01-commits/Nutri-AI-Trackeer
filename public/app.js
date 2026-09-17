@@ -3,8 +3,6 @@
  * Includes authentication, meal logging, and nutrition tracking
  */
 
-const API_URL = window.location.origin;
-
 let chartInstance = null;
 let currentBase64Image = null;
 let currentUser = null;
@@ -22,9 +20,15 @@ function checkAuthentication() {
   const token = localStorage.getItem('authToken');
   const user = localStorage.getItem('currentUser');
   
-  if (token && user) {
-    authToken = token;
-    currentUser = JSON.parse(user);
+  if (token && user && /^\d+$/.test(token)) {
+    try {
+      authToken = token;
+      currentUser = JSON.parse(user);
+    } catch (error) {
+      clearAuthentication();
+      showAuthScreen();
+      return;
+    }
     showApp();
     setupEventListeners();
     loadDailyData();
@@ -33,6 +37,22 @@ function checkAuthentication() {
   } else {
     showAuthScreen();
   }
+}
+
+function clearAuthentication() {
+  authToken = null;
+  currentUser = null;
+  localStorage.removeItem('authToken');
+  localStorage.removeItem('currentUser');
+}
+
+function handleUnauthorized(response) {
+  if (response.status !== 401) return false;
+
+  clearAuthentication();
+  alert('Your session has expired. Please sign in again.');
+  window.location.reload();
+  return true;
 }
 
 function showAuthScreen() {
@@ -73,7 +93,7 @@ async function handleLogin(e) {
   const errorDiv = document.getElementById('loginError');
 
   try {
-    const response = await fetch(`${API_URL}/api/auth/login`, {
+    const response = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password })
@@ -112,7 +132,7 @@ async function handleSignup(e) {
   const errorDiv = document.getElementById('signupError');
 
   try {
-    const response = await fetch(`${API_URL}/api/auth/signup`, {
+    const response = await fetch('/api/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, email, password })
@@ -144,10 +164,7 @@ async function handleSignup(e) {
 }
 
 function handleLogout() {
-  authToken = null;
-  currentUser = null;
-  localStorage.removeItem('authToken');
-  localStorage.removeItem('currentUser');
+  clearAuthentication();
   location.reload();
 }
 
@@ -155,7 +172,7 @@ function handleLogout() {
 
 async function loadNutritionGoals() {
   try {
-    const response = await fetch(`${API_URL}/api/goals`, {
+    const response = await fetch('/api/goals', {
       headers: { 'Authorization': `Bearer ${authToken}` }
     });
 
@@ -198,7 +215,7 @@ async function handleSaveGoals(e) {
   };
 
   try {
-    const response = await fetch(`${API_URL}/api/goals`, {
+    const response = await fetch('/api/goals', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -208,6 +225,8 @@ async function handleSaveGoals(e) {
     });
 
     const data = await response.json();
+
+    if (handleUnauthorized(response)) return;
 
     if (!response.ok) {
       messageDiv.textContent = data.error || 'Failed to save goals';
@@ -372,7 +391,7 @@ async function handleFormSubmit(e) {
   submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Analyzing...';
 
   try {
-    const response = await fetch(`${API_URL}/api/analyze-meal`, {
+    const response = await fetch('/api/analyze-meal', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -387,6 +406,8 @@ async function handleFormSubmit(e) {
     });
 
     const data = await response.json();
+
+    if (handleUnauthorized(response)) return;
 
     if (!response.ok) {
       alert(data.error || 'Failed to analyze meal');
@@ -457,9 +478,11 @@ function displayAnalysisResult(data) {
 
 async function loadDailyData() {
   try {
-    const response = await fetch(`${API_URL}/api/daily-history`, {
+    const response = await fetch('/api/daily-history', {
       headers: { 'Authorization': `Bearer ${authToken}` }
     });
+
+    if (handleUnauthorized(response)) return;
 
     if (!response.ok) return;
 
@@ -552,7 +575,7 @@ async function deleteMeal(id) {
   if (!confirm('Delete this meal log?')) return;
 
   try {
-    const response = await fetch(`${API_URL}/api/logs/${id}`, {
+    const response = await fetch(`/api/logs/${id}`, {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${authToken}` }
     });
@@ -571,7 +594,7 @@ async function handleClearAll() {
   if (!confirm('Delete ALL meal logs? This cannot be undone.')) return;
 
   try {
-    const response = await fetch(`${API_URL}/api/daily-history`, {
+    const response = await fetch('/api/daily-history', {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${authToken}` }
     });
@@ -606,9 +629,11 @@ function closeMonthlyModal() {
 
 async function fetchMonthlyData() {
   try {
-    const response = await fetch(`${API_URL}/api/monthly-history`, {
+    const response = await fetch('/api/monthly-history', {
       headers: { 'Authorization': `Bearer ${authToken}` }
     });
+
+    if (handleUnauthorized(response)) return;
 
     if (!response.ok) return;
 

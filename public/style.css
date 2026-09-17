@@ -474,6 +474,52 @@ textarea { resize: vertical; min-height: 84px; font-family: var(--font-body); }
   55%, 100% { transform: translateX(220%); }
 }
 
+.summary-status {
+  margin: -8px 0 var(--space-4);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+.summary-status.over-budget { color: var(--danger); }
+
+.goal-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+}
+.goal-stat {
+  padding: var(--space-4);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.025);
+}
+.goal-stat-label {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  margin-bottom: var(--space-2);
+}
+.goal-stat strong { font-family: var(--font-mono); font-size: 0.85rem; }
+.goal-stat.protein strong { color: var(--protein); }
+.goal-stat.carbs strong { color: var(--carbs); }
+.goal-stat.fats strong { color: var(--fats); }
+.mini-progress {
+  height: 4px;
+  margin-top: var(--space-3);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.mini-progress span {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  transition: width 0.4s ease;
+}
+.goal-stat.protein .mini-progress span { background: var(--protein); }
+.goal-stat.carbs .mini-progress span { background: var(--carbs); }
+.goal-stat.fats .mini-progress span { background: var(--fats); }
+
 /* ============================================================
    Macro chart card
    ============================================================ */
@@ -686,6 +732,33 @@ textarea { resize: vertical; min-height: 84px; font-family: var(--font-body); }
 }
 .history-header h2 i { color: var(--ignite-1); }
 
+.history-tools {
+  display: flex;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.history-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.035);
+}
+.history-search input {
+  width: 100%;
+  padding: var(--space-3) 0;
+  border: 0;
+  outline: 0;
+  color: var(--text-primary);
+  background: transparent;
+  font: inherit;
+}
+.history-tools select { max-width: 190px; }
+
 .btn-clear {
   display: flex;
   align-items: center;
@@ -766,6 +839,9 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
   .form-row { grid-template-columns: 1fr; }
   .chart-layout { flex-direction: column; }
   .app-header { flex-direction: column; align-items: flex-start; }
+  .goal-stats { grid-template-columns: 1fr; }
+  .history-tools { flex-direction: column; }
+  .history-tools select { max-width: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,7 +1,9 @@
 /**
  * Input Validation Middleware
  */
-import {verifyToken as verifyAuthToken } from './authUtils.js';
+
+import { getUserById } from './db.js';
+
 export function validateMealInput(req, res, next) {
   const { mealType, category, textInput, imageBase64 } = req.body;
 
@@ -53,7 +55,7 @@ export function validateNutritionGoals(req, res, next) {
   const { dailyCalorieTarget, dailyProteinTarget, dailyCarbsTarget, dailyFatsTarget } = req.body;
 
   // Validate calorie target
-  if (dailyCalorieTarget !== undefined && dailyCalorieTarget !== null) {
+  if (dailyCalorieTarget) {
     const cal = parseInt(dailyCalorieTarget);
     if (isNaN(cal) || cal < 500 || cal > 10000) {
       return res.status(400).json({
@@ -65,7 +67,7 @@ export function validateNutritionGoals(req, res, next) {
 
   // Validate macro targets
   const validateMacro = (value, name) => {
-    if (value !== undefined && value !== null) {
+    if (value) {
       const macro = parseFloat(value);
       if (isNaN(macro) || macro < 0 || macro > 500) {
         return `${name} must be between 0 and 500g`;
@@ -126,30 +128,31 @@ export function validateAuthInput(req, res, next) {
  * In production, use a proper JWT library
  */
 export function verifyToken(req, res, next) {
-  const authHeader = req.headers.authorization;
+  const authorization = req.headers.authorization || '';
+  const [scheme, token] = authorization.split(' ');
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (scheme !== 'Bearer' || !token) {
     return res.status(401).json({
       success: false,
       error: 'No authorization token provided'
     });
   }
 
-  const token = authHeader.split(' ')[1];
-
-  const userId = verifyAuthToken(token);
-
-  if (!userId) {
+  try {
+    const userId = parseInt(token);
+    if (!Number.isInteger(userId) || userId < 1 || !getUserById(userId)) {
+      throw new Error('Invalid token');
+    }
+    req.userId = userId;
+    next();
+  } catch (error) {
     return res.status(401).json({
       success: false,
       error: 'Invalid or expired token'
     });
   }
-
-  req.userId = userId;
-
-  next();
 }
+
 /**
  * Error handling middleware
  */
