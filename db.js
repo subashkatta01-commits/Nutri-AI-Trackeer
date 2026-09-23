@@ -28,6 +28,23 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS user_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL UNIQUE,
+    age INTEGER,
+    gender TEXT,
+    height_cm REAL,
+    weight_kg REAL,
+    activity_level TEXT,
+    goal TEXT,
+    dietary_preferences TEXT DEFAULT '',
+    allergies TEXT DEFAULT '',
+    onboarding_completed INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE IF NOT EXISTS meal_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     meal_type TEXT DEFAULT 'Snack',
@@ -114,7 +131,11 @@ export function authenticateUser(email, password) {
  */
 export function getUserById(userId) {
   const stmt = db.prepare(`
-    SELECT id, username, email, created_at FROM users WHERE id = ?
+    SELECT u.id, u.username, u.email, u.created_at,
+      IFNULL(p.onboarding_completed, 0) as onboarding_completed
+    FROM users u
+    LEFT JOIN user_profiles p ON p.user_id = u.id
+    WHERE u.id = ?
   `);
   return stmt.get(userId);
 }
@@ -171,6 +192,64 @@ export function updateNutritionGoals(userId, goals) {
     goals.dailyFatsTarget || 65,
     userId
   );
+}
+
+// ========== USER PROFILE / ONBOARDING ==========
+
+/**
+ * Get a user's onboarding profile
+ */
+export function getUserProfile(userId) {
+  const stmt = db.prepare(`
+    SELECT * FROM user_profiles WHERE user_id = ?
+  `);
+  return stmt.get(userId) || null;
+}
+
+/**
+ * Insert or update a user's onboarding profile.
+ * Marks onboarding as complete once a full profile is saved.
+ */
+export function upsertUserProfile(userId, profile) {
+  const existing = getUserProfile(userId);
+
+  if (existing) {
+    db.prepare(`
+      UPDATE user_profiles
+      SET age = ?, gender = ?, height_cm = ?, weight_kg = ?, activity_level = ?,
+          goal = ?, dietary_preferences = ?, allergies = ?, onboarding_completed = 1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+    `).run(
+      profile.age,
+      profile.gender,
+      profile.heightCm,
+      profile.weightKg,
+      profile.activityLevel,
+      profile.goal,
+      profile.dietaryPreferences || '',
+      profile.allergies || '',
+      userId
+    );
+  } else {
+    db.prepare(`
+      INSERT INTO user_profiles
+        (user_id, age, gender, height_cm, weight_kg, activity_level, goal, dietary_preferences, allergies, onboarding_completed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    `).run(
+      userId,
+      profile.age,
+      profile.gender,
+      profile.heightCm,
+      profile.weightKg,
+      profile.activityLevel,
+      profile.goal,
+      profile.dietaryPreferences || '',
+      profile.allergies || ''
+    );
+  }
+
+  return getUserProfile(userId);
 }
 
 // ========== MEAL LOGS ==========

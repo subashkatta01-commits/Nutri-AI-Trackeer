@@ -6,7 +6,7 @@
   <title>Smart AI Diet & Macro Tracker</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="style.css?v=20260917">
+  <link rel="stylesheet" href="style.css?v=20260923">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -56,6 +56,166 @@
     </div>
   </div>
 
+  <!-- ONBOARDING SCREEN (personalized setup after signup) -->
+  <div id="onboardingScreen" class="auth-screen hidden">
+    <div class="auth-container">
+      <div class="card onboarding-card">
+        <div class="onboard-close-wrap">
+          <button type="button" id="onboardingClose" class="btn-close hidden" title="Close">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+
+        <div class="onboarding-logo">
+          <i class="fa-solid fa-user-astronaut"></i>
+          <h1>Let's Personalize Your Plan</h1>
+          <p>Answer a few quick questions and we'll calculate your calorie &amp; macro targets for you.</p>
+        </div>
+
+        <div class="onboarding-progress">
+          <div class="onboarding-progress-track">
+            <div id="onboardingProgressBar" class="onboarding-progress-fill" style="width: 25%;"></div>
+          </div>
+          <div class="onboarding-progress-labels" id="onboardingProgressLabels">
+            <span>Body</span><span>Activity</span><span>Diet</span><span>Plan</span>
+          </div>
+        </div>
+
+        <div class="onboarding-steps">
+
+          <!-- STEP 1: Body stats -->
+          <section class="onboarding-step" data-step="1">
+            <h2><i class="fa-solid fa-weight-scale"></i> Tell us about your body</h2>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="onboardingAge">Age</label>
+                <input type="number" id="onboardingAge" min="13" max="120" step="1" placeholder="e.g. 28" required>
+              </div>
+              <div class="form-group">
+                <label for="onboardingGender">Biological sex at birth</label>
+                <select id="onboardingGender">
+                  <option value="female">Female</option>
+                  <option value="male">Male</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="onboardingHeightCm">Height (cm)</label>
+                <input type="number" id="onboardingHeightCm" min="90" max="250" step="0.5" placeholder="e.g. 170" required>
+              </div>
+              <div class="form-group">
+                <label for="onboardingWeightKg">Weight (kg)</label>
+                <input type="number" id="onboardingWeightKg" min="25" max="400" step="0.1" placeholder="e.g. 70" required>
+              </div>
+            </div>
+          </section>
+
+          <!-- STEP 2: Activity + goal -->
+          <section class="onboarding-step hidden" data-step="2">
+            <h2><i class="fa-solid fa-person-running"></i> Your activity &amp; goal</h2>
+            <div class="form-group">
+              <label for="onboardingActivity">Activity level</label>
+              <select id="onboardingActivity">
+                <option value="sedentary">Sedentary — desk job, little exercise</option>
+                <option value="light">Lightly Active — 1–3 workouts / week</option>
+                <option value="moderate" selected>Moderately Active — 3–5 workouts / week</option>
+                <option value="active">Very Active — 6–7 workouts / week</option>
+                <option value="very_active">Athlete — intense training or physical job</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="onboardingGoal">Primary goal</label>
+              <select id="onboardingGoal">
+                <option value="lose">Lose Weight</option>
+                <option value="maintain" selected>Maintain Weight</option>
+                <option value="gain">Gain Muscle</option>
+              </select>
+            </div>
+          </section>
+
+          <!-- STEP 3: Diet preferences + allergies -->
+          <section class="onboarding-step hidden" data-step="3">
+            <h2><i class="fa-solid fa-carrot"></i> Diet &amp; allergies</h2>
+            <div class="form-group">
+              <label>Dietary preferences (select any)</label>
+              <div class="chip-row" id="onboardingDietChips">
+                <button type="button" class="chip selected" data-value="No Restrictions">No Restrictions</button>
+                <button type="button" class="chip" data-value="Vegetarian">Vegetarian</button>
+                <button type="button" class="chip" data-value="Vegan">Vegan</button>
+                <button type="button" class="chip" data-value="Pescatarian">Pescatarian</button>
+                <button type="button" class="chip" data-value="Keto / Low-Carb">Keto / Low-Carb</button>
+                <button type="button" class="chip" data-value="Dairy-Free">Dairy-Free</button>
+                <button type="button" class="chip" data-value="Gluten-Free">Gluten-Free</button>
+                <button type="button" class="chip" data-value="Halal">Halal</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="onboardingAllergyInput">Food allergies <small>(tap to add common ones)</small></label>
+              <div class="chip-row" id="onboardingAllergyChips">
+                <button type="button" class="chip" data-value="Peanuts">Peanuts</button>
+                <button type="button" class="chip" data-value="Tree Nuts">Tree Nuts</button>
+                <button type="button" class="chip" data-value="Shellfish">Shellfish</button>
+                <button type="button" class="chip" data-value="Fish">Fish</button>
+                <button type="button" class="chip" data-value="Milk">Milk</button>
+                <button type="button" class="chip" data-value="Eggs">Eggs</button>
+                <button type="button" class="chip" data-value="Soy">Soy</button>
+                <button type="button" class="chip" data-value="Wheat / Gluten">Wheat / Gluten</button>
+              </div>
+              <input type="text" id="onboardingAllergyInput" placeholder="e.g. Sesame, Celery (comma separated) — leave blank if none" maxlength="1000">
+            </div>
+          </section>
+
+          <!-- STEP 4: Personalized results -->
+          <section class="onboarding-step hidden" data-step="4">
+            <h2><i class="fa-solid fa-wand-magic-sparkles"></i> Your personalized targets</h2>
+            <p class="onboarding-result-note">We used the Mifflin-St Jeor equation and your activity level to build these daily targets.</p>
+            <div class="target-result-grid">
+              <div class="target-result calories">
+                <span class="target-result-value" id="onboardResultCalories">—</span>
+                <span class="target-result-unit">kcal / day</span>
+                <span class="target-result-label">Calories</span>
+              </div>
+              <div class="target-result protein">
+                <span class="target-result-value" id="onboardResultProtein">—</span>
+                <span class="target-result-unit">grams / day</span>
+                <span class="target-result-label">Protein</span>
+              </div>
+              <div class="target-result carbs">
+                <span class="target-result-value" id="onboardResultCarbs">—</span>
+                <span class="target-result-unit">grams / day</span>
+                <span class="target-result-label">Carbs</span>
+              </div>
+              <div class="target-result fats">
+                <span class="target-result-value" id="onboardResultFats">—</span>
+                <span class="target-result-unit">grams / day</span>
+                <span class="target-result-label">Fats</span>
+              </div>
+            </div>
+            <div class="onboarding-estimate-row">
+              <span>Estimated BMR: <strong id="onboardResultBmr">—</strong> kcal</span>
+              <span>Estimated TDEE: <strong id="onboardResultTdee">—</strong> kcal</span>
+              <span>Goal: <strong id="onboardResultGoal">—</strong></span>
+            </div>
+            <p class="onboarding-result-note">You can fine-tune or recalculate these any time from the settings menu.</p>
+          </section>
+
+        </div>
+
+        <div class="onboarding-nav">
+          <button type="button" id="onboardingBack" class="btn-ghost">
+            <i class="fa-solid fa-arrow-left"></i> Back
+          </button>
+          <button type="button" id="onboardingNext" class="btn-primary">
+            Next <i class="fa-solid fa-arrow-right"></i>
+          </button>
+        </div>
+        <div id="onboardingMessage" class="message"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- MAIN APP SCREEN (shown after login) -->
   <div id="appScreen" class="app-screen hidden">
 
@@ -86,11 +246,26 @@
   <div class="modal-overlay hidden" id="settingsModalOverlay">
     <div class="card modal-panel settings-modal">
       <div class="modal-header">
-        <h3><i class="fa-solid fa-target"></i> Nutrition Goals</h3>
+        <h3><i class="fa-solid fa-sliders"></i> Settings</h3>
         <button type="button" id="closeSettingsBtn" class="btn-close">
           <i class="fa-solid fa-xmark"></i>
         </button>
       </div>
+
+      <div class="settings-profile-panel">
+        <div class="settings-profile-head">
+          <h4><i class="fa-solid fa-user"></i> Your Profile</h4>
+          <button type="button" id="editProfileBtn" class="btn-secondary">
+            <i class="fa-solid fa-pen"></i> Edit &amp; Recalculate
+          </button>
+        </div>
+        <div id="profileSummary" class="profile-summary">Loading your profile...</div>
+      </div>
+
+      <div class="settings-divider">
+        <span><i class="fa-solid fa-bullseye"></i> Nutrition Targets</span>
+      </div>
+
       <form id="goalsForm" class="settings-form">
         <div class="form-group">
           <label for="targetCalories">Daily Calorie Target</label>
@@ -114,7 +289,119 @@
     </div>
   </div>
 
-  <main class="dashboard-grid single-column" id="dashboardGrid">
+  <!-- DAILY DASHBOARD SUMMARY (always visible after login) -->
+  <section class="summary-dashboard" id="summaryDashboard">
+    <div class="summary-top">
+      <div class="greeting-block">
+        <h2 id="greetingText">Welcome back</h2>
+        <p id="summaryDateLine"></p>
+      </div>
+      <div class="motivational-status start" id="motivationalStatus">
+        <i class="fa-solid fa-bolt"></i>
+        <span id="motivationalText">Log your first meal to start today's tracking.</span>
+      </div>
+    </div>
+
+    <div class="stat-grid">
+      <!-- Calories -->
+      <article class="stat-card calories">
+        <div class="stat-card-head">
+          <span class="stat-icon"><i class="fa-solid fa-fire-flame-curved"></i></span>
+          <span class="stat-label">Calories</span>
+          <span class="stat-pct" id="pctCalories">0%</span>
+        </div>
+        <div class="stat-ring-wrap">
+          <svg class="stat-ring" viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+            <circle class="ring-fill" id="ringCalories" cx="60" cy="60" r="52"></circle>
+          </svg>
+          <div class="ring-center">
+            <strong id="valueCalories">0</strong>
+            <small>kcal</small>
+          </div>
+        </div>
+        <div class="stat-meta">
+          <div class="goal-bar"><div class="goal-bar-fill" id="barCalories"></div></div>
+          <p class="goal-line">of <span id="goalCalories">2000</span> kcal goal</p>
+          <p class="remaining-line" id="remainingCalories">Remaining today: <strong>2000 kcal</strong></p>
+        </div>
+      </article>
+
+      <!-- Protein -->
+      <article class="stat-card protein">
+        <div class="stat-card-head">
+          <span class="stat-icon"><i class="fa-solid fa-dumbbell"></i></span>
+          <span class="stat-label">Protein</span>
+          <span class="stat-pct" id="pctProtein">0%</span>
+        </div>
+        <div class="stat-ring-wrap">
+          <svg class="stat-ring" viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+            <circle class="ring-fill" id="ringProtein" cx="60" cy="60" r="52"></circle>
+          </svg>
+          <div class="ring-center">
+            <strong id="valueProtein">0</strong>
+            <small>grams</small>
+          </div>
+        </div>
+        <div class="stat-meta">
+          <div class="goal-bar"><div class="goal-bar-fill" id="barProtein"></div></div>
+          <p class="goal-line">of <span id="goalProtein">150</span> g goal</p>
+          <p class="remaining-line" id="remainingProtein">Remaining today: <strong>150g</strong></p>
+        </div>
+      </article>
+
+      <!-- Carbs -->
+      <article class="stat-card carbs">
+        <div class="stat-card-head">
+          <span class="stat-icon"><i class="fa-solid fa-bread-slice"></i></span>
+          <span class="stat-label">Carbs</span>
+          <span class="stat-pct" id="pctCarbs">0%</span>
+        </div>
+        <div class="stat-ring-wrap">
+          <svg class="stat-ring" viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+            <circle class="ring-fill" id="ringCarbs" cx="60" cy="60" r="52"></circle>
+          </svg>
+          <div class="ring-center">
+            <strong id="valueCarbs">0</strong>
+            <small>grams</small>
+          </div>
+        </div>
+        <div class="stat-meta">
+          <div class="goal-bar"><div class="goal-bar-fill" id="barCarbs"></div></div>
+          <p class="goal-line">of <span id="goalCarbs">250</span> g goal</p>
+          <p class="remaining-line" id="remainingCarbs">Remaining today: <strong>250g</strong></p>
+        </div>
+      </article>
+
+      <!-- Fats -->
+      <article class="stat-card fats">
+        <div class="stat-card-head">
+          <span class="stat-icon"><i class="fa-solid fa-droplet"></i></span>
+          <span class="stat-label">Fat</span>
+          <span class="stat-pct" id="pctFats">0%</span>
+        </div>
+        <div class="stat-ring-wrap">
+          <svg class="stat-ring" viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+            <circle class="ring-fill" id="ringFats" cx="60" cy="60" r="52"></circle>
+          </svg>
+          <div class="ring-center">
+            <strong id="valueFats">0</strong>
+            <small>grams</small>
+          </div>
+        </div>
+        <div class="stat-meta">
+          <div class="goal-bar"><div class="goal-bar-fill" id="barFats"></div></div>
+          <p class="goal-line">of <span id="goalFats">65</span> g goal</p>
+          <p class="remaining-line" id="remainingFats">Remaining today: <strong>65g</strong></p>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <main class="dashboard-grid" id="dashboardGrid">
     
     <!-- LEFT PANEL: Meal Input Form -->
     <section class="card input-card">
@@ -171,8 +458,8 @@
       </form>
     </section>
 
-    <!-- RIGHT PANEL: Dashboard & Daily Summary (revealed after the first analysis) -->
-    <section class="dashboard-panel hidden" id="dashboardPanel">
+    <!-- RIGHT PANEL: Dashboard & Daily Summary -->
+    <section class="dashboard-panel" id="dashboardPanel">
 
       <!-- Calorie Progress Banner -->
       <div class="card summary-card">
@@ -191,6 +478,7 @@
         <div class="chart-layout">
           <div class="chart-container">
             <canvas id="macroChart"></canvas>
+            <div id="macroChartEmpty" class="chart-empty">No meals logged yet</div>
           </div>
           <div class="macro-stats">
             <div class="macro-item protein">
@@ -282,6 +570,6 @@
 
   </div><!-- End of appScreen -->
 
-  <script src="app.js?v=20260917"></script>
+  <script src="app.js?v=20260923"></script>
 </body>
 </html>

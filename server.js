@@ -34,6 +34,56 @@ app.get('/', (req, res) => {
 // Initialize Gemini Client
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+const sleep = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds));
+const primaryGeminiModel = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+const fallbackGeminiModels = [primaryGeminiModel, 'gemini-3.6-flash', 'gemini-3.6-flash']
+  .filter((model, index, models) => model && models.indexOf(model) === index);
+
+const isQuotaExceededError = (error) => (
+  error?.status === 429 && /quota exceeded|resource.?exhausted|free.?tier/i.test(error?.message || '')
+);
+
+const isTransientGeminiError = (error) => (
+  (error?.status === 429 && !isQuotaExceededError(error)) ||
+  error?.status === 500 ||
+  error?.status === 503 ||
+  error?.code === 429 ||
+  error?.code === 500 ||
+  error?.code === 503 ||
+  /rate.?limit|resource.?exhausted|overloaded|temporar(y|ily)|unavailable|busy/i.test(error?.message || '') ||
+  error?.code === 'ECONNRESET' ||
+  error?.cause?.code === 'ECONNRESET'
+);
+
+const isGeminiNetworkError = (error) => (
+  error?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
+  error?.cause?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
+  error?.code === 'ETIMEDOUT' ||
+  error?.cause?.code === 'ETIMEDOUT' ||
+  error?.code === 'ENETUNREACH' ||
+  error?.cause?.code === 'ENETUNREACH' ||
+  error?.code === 'EAI_AGAIN' ||
+  error?.cause?.code === 'EAI_AGAIN'
+);
+
+async function generateMealAnalysis(contents, config) {
+  let lastError;
+
+  for (const model of fallbackGeminiModels) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await ai.models.generateContent({ model, contents, config });
+      } catch (error) {
+        lastError = error;
+        if (!isTransientGeminiError(error)) throw error;
+        if (attempt === 0) await sleep(1500);
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 // ========== AUTHENTICATION ENDPOINTS ==========
 
 /**
@@ -65,7 +115,7 @@ app.post('/api/auth/signup', validateAuthInput, (req, res) => {
     });
   } catch (error) {
     console.error('Signup Error:', error);
-    res.status(500).json({
+    res.status(500).json({ 
       success: false,
       error: error.message || 'Failed to create account'
     });
@@ -178,7 +228,6 @@ app.put('/api/goals', verifyToken, validateNutritionGoals, (req, res) => {
     };
 
     updateNutritionGoals(req.userId, goalsData);
-    const updatedGoals = getNutritionGoals(req.userId);
 
     res.json({
       success: true,
@@ -258,13 +307,9 @@ Reply ONLY in raw JSON with no markdown:
 
     contents.push({ text: `${systemPrompt}\nUser Input: ${textInput || 'Analyze the provided image.'}` });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents,
-      config: {
-        responseMimeType: 'application/json',
-        temperature: 0.1
-      }
+    const response = await generateMealAnalysis(contents, {
+      responseMimeType: 'application/json',
+      temperature: 0.1
     });
 
     // Clean markdown code blocks if present
@@ -290,9 +335,20 @@ Reply ONLY in raw JSON with no markdown:
 
   } catch (error) {
     console.error('Meal Analysis Error:', error);
-    res.status(500).json({ 
+    const isQuotaExceeded = isQuotaExceededError(error);
+    const isTransient = isTransientGeminiError(error);
+    const isNetworkError = isGeminiNetworkError(error);
+    const statusCode = isQuotaExceeded ? 429 : (isTransient ? 503 : (isNetworkError ? 502 : 500));
+    res.status(statusCode).json({ 
       success: false, 
-      error: error.message || 'Failed to process meal with AI model.' 
+      retryAfterSeconds: isTransient ? 5 : undefined,
+      error: isQuotaExceeded
+        ? 'Gemini daily quota is exhausted. Wait for the quota reset or use a different API project/model.'
+        : isTransient
+        ? 'The AI service is temporarily busy. Please try again shortly.'
+        : isNetworkError
+        ? 'Cannot reach Google Gemini from this computer. Check your internet connection, firewall, VPN, or proxy settings, then try again.'
+        : (error.message || 'Failed to process meal with AI model.')
     });
   }
 });
@@ -459,7 +515,16 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📊 Diet Tracker API with authentication enabled`);
+});
+
+server.on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use. Stop the existing server or run with a different port:`);
+    console.error('$env:PORT=3001; npm start');
+    process.exit(1);
+  }
+  throw error;
 });

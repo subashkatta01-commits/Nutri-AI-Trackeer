@@ -90,6 +90,42 @@ export function validateNutritionGoals(req, res, next) {
   next();
 }
 
+export function validateProfileInput(req, res, next) {
+  const { age, gender, heightCm, weightKg, activityLevel, goal, dietaryPreferences, allergies } = req.body;
+
+  const validGender = ['male', 'female', 'other'];
+  const validActivity = ['sedentary', 'light', 'moderate', 'active', 'very_active'];
+  const validGoal = ['lose', 'maintain', 'gain'];
+
+  if (typeof age === 'undefined' || Number.isNaN(parseInt(age)) || parseInt(age) < 13 || parseInt(age) > 120) {
+    return res.status(400).json({ success: false, error: 'Age must be between 13 and 120' });
+  }
+  if (!validGender.includes(gender)) {
+    return res.status(400).json({ success: false, error: 'Gender must be male, female, or other' });
+  }
+  if (Number.isNaN(parseFloat(heightCm)) || parseFloat(heightCm) < 90 || parseFloat(heightCm) > 250) {
+    return res.status(400).json({ success: false, error: 'Height must be between 90 and 250 cm' });
+  }
+  if (Number.isNaN(parseFloat(weightKg)) || parseFloat(weightKg) < 25 || parseFloat(weightKg) > 400) {
+    return res.status(400).json({ success: false, error: 'Weight must be between 25 and 400 kg' });
+  }
+  if (!validActivity.includes(activityLevel)) {
+    return res.status(400).json({ success: false, error: 'Invalid activity level' });
+  }
+  if (!validGoal.includes(goal)) {
+    return res.status(400).json({ success: false, error: 'Primary goal must be lose, maintain, or gain' });
+  }
+  if (dietaryPreferences && dietaryPreferences.length > 500) {
+    return res.status(400).json({ success: false, error: 'Dietary preferences list is too long' });
+  }
+  if (allergies && String(allergies).length > 1000) {
+    return res.status(400).json({ success: false, error: 'Allergies text is too long (max 1000 characters)' });
+  }
+
+  req.profileInput = req.body;
+  next();
+}
+
 export function validateAuthInput(req, res, next) {
   const { email, password, username } = req.body;
 

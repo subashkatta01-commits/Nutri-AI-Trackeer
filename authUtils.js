@@ -17,12 +17,13 @@ export function generateToken(userId) {
 export function formatUserResponse(user) {
   if (!user) return null;
   
-  const { id, username, email, created_at } = user;
+  const { id, username, email, created_at, onboarding_completed } = user;
   return {
     id,
     username,
     email,
-    created_at
+    created_at,
+    onboarding_completed: onboarding_completed ? 1 : 0
   };
 }
 
