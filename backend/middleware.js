@@ -51,6 +51,128 @@ export function validateMealInput(req, res, next) {
   next();
 }
 
+/**
+ * Validate a partial meal-log edit (PUT /api/logs/:id).
+ *
+ * Only the fields the table editor can change are accepted. Rejecting unknown
+ * keys here keeps the endpoint from being used to tamper with `user_id`, `id`
+ * or the stored photo.
+ */
+export function validateMealEdit(req, res, next) {
+  const allowed = [
+    'mealType',
+    'category',
+    'mealName',
+    'calories',
+    'protein',
+    'carbs',
+    'fats',
+    'efficiencyScore',
+    'advice',
+    'goalAlignmentReason',
+    'detectedItems'
+  ];
+
+  const body = req.body || {};
+  const provided = allowed.filter((key) =>
+    Object.prototype.hasOwnProperty.call(body, key) && body[key] !== undefined && body[key] !== null
+  );
+
+  if (provided.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: `Provide at least one editable field: ${allowed.join(', ')}.`
+    });
+  }
+
+  const unexpected = Object.keys(body).filter((key) => !allowed.includes(key));
+  if (unexpected.length > 0) {
+    return res.status(400).json({
+      success: false,
+      error: `Cannot edit: ${unexpected.join(', ')}.`
+    });
+  }
+
+  const validMealTypes = ['Breakfast', 'Lunch', 'Dinner', 'Snack'];
+  if ('mealType' in body && !validMealTypes.includes(body.mealType)) {
+    return res.status(400).json({
+      success: false,
+      error: `Invalid meal type. Must be one of: ${validMealTypes.join(', ')}`
+    });
+  }
+
+  if ('category' in body) {
+    const category = String(body.category).trim();
+    if (!category || category.length > 120) {
+      return res.status(400).json({ success: false, error: 'Category must be 1-120 characters.' });
+    }
+    body.category = category;
+  }
+
+  if ('mealName' in body) {
+    const mealName = String(body.mealName).trim();
+    if (!mealName || mealName.length > 160) {
+      return res.status(400).json({ success: false, error: 'Meal name must be 1-160 characters.' });
+    }
+    body.mealName = mealName;
+  }
+
+  if ('efficiencyScore' in body) {
+    const valid = ['High', 'Medium', 'Low'];
+    if (!valid.includes(body.efficiencyScore)) {
+      return res.status(400).json({ success: false, error: `Efficiency score must be one of: ${valid.join(', ')}` });
+    }
+  }
+
+  const numericFields = { calories: 10000, protein: 1000, carbs: 1000, fats: 1000 };
+  for (const [field, max] of Object.entries(numericFields)) {
+    if (!(field in body)) continue;
+
+    const value = Number(body[field]);
+    if (!Number.isFinite(value) || value < 0 || value > max) {
+      return res.status(400).json({
+        success: false,
+        error: `${field} must be a number between 0 and ${max}.`
+      });
+    }
+    body[field] = Math.round(value);
+  }
+
+  const textFields = { advice: 1000, goalAlignmentReason: 1000 };
+  for (const [field, max] of Object.entries(textFields)) {
+    if (!(field in body)) continue;
+
+    const value = String(body[field]);
+    if (value.length > max) {
+      return res.status(400).json({ success: false, error: `${field} is too long (max ${max} characters).` });
+    }
+    body[field] = value.trim();
+  }
+
+  if ('detectedItems' in body) {
+    const items = body.detectedItems;
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ success: false, error: 'detectedItems must be an array.' });
+    }
+    if (items.length > 40) {
+      return res.status(400).json({ success: false, error: 'detectedItems may contain at most 40 entries.' });
+    }
+
+    for (const item of items) {
+      if (!item || typeof item !== 'object' || !String(item.name || '').trim()) {
+        return res.status(400).json({ success: false, error: 'Each detected item needs a name.' });
+      }
+    }
+
+    body.detectedItems = items.map((item) => ({
+      name: String(item.name).trim().slice(0, 120),
+      estimatedPortion: String(item.estimatedPortion || '').trim().slice(0, 120)
+    }));
+  }
+
+  next();
+}
+
 export function validateNutritionGoals(req, res, next) {
   const { dailyCalorieTarget, dailyProteinTarget, dailyCarbsTarget, dailyFatsTarget } = req.body;
 

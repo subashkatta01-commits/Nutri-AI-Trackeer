@@ -535,20 +535,57 @@
     </div>
   </div>
 
-  <!-- TODAY'S MEAL HISTORY TABLE -->
+  <!-- MEAL HISTORY: filterable, searchable, paginated -->
   <section class="card history-section">
     <div class="history-header">
-      <h2><i class="fa-solid fa-list-check"></i> Today's Logged Meals</h2>
+      <h2><i class="fa-solid fa-list-check"></i> Meal History</h2>
       <button type="button" id="clearAllBtn" class="btn-clear">
         <i class="fa-solid fa-trash"></i> Clear All History
       </button>
+    </div>
+
+    <div class="history-tools">
+      <div class="history-search">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        <input
+          type="search"
+          id="historySearch"
+          placeholder="Search meals by name..."
+          autocomplete="off"
+          aria-label="Search meals by name"
+        />
+      </div>
+
+      <select id="historyRange" aria-label="Filter by date range">
+        <option value="today">Today</option>
+        <option value="yesterday">Yesterday</option>
+        <option value="week">Last 7 Days</option>
+        <option value="month">Last 30 Days</option>
+        <option value="all">All Time</option>
+        <option value="custom">Custom Range</option>
+      </select>
+
+      <div class="history-custom-range hidden" id="historyCustomRange">
+        <input type="date" id="historyStartDate" aria-label="Start date" />
+        <span class="history-range-sep">to</span>
+        <input type="date" id="historyEndDate" aria-label="End date" />
+        <button type="button" id="historyApplyRange" class="btn-apply-range">Apply</button>
+      </div>
+    </div>
+
+    <div class="history-summary" id="historySummary">
+      <span class="history-summary-item"><i class="fa-solid fa-fire"></i> <strong id="histTotalCal">0</strong> kcal</span>
+      <span class="history-summary-item"><strong id="histTotalProtein">0</strong>g protein</span>
+      <span class="history-summary-item"><strong id="histTotalCarbs">0</strong>g carbs</span>
+      <span class="history-summary-item"><strong id="histTotalFats">0</strong>g fats</span>
+      <span class="history-summary-item history-summary-count" id="historyCount">0 meals</span>
     </div>
 
     <div class="table-responsive">
       <table>
         <thead>
           <tr>
-            <th>Time</th>
+            <th>Date &amp; Time</th>
             <th>Type</th>
             <th>Meal</th>
             <th>Calories</th>
@@ -566,10 +603,50 @@
         </tbody>
       </table>
     </div>
+
+    <div class="history-footer">
+      <span class="history-footer-text" id="historyRangeLabel"></span>
+      <button type="button" id="loadMoreBtn" class="btn-load-more hidden">
+        <i class="fa-solid fa-arrow-down"></i> Load more
+      </button>
+    </div>
   </section>
 
   </div><!-- End of appScreen -->
 
-  <script src="app.js?v=20260923"></script>
+  <!-- MEAL DETAILS MODAL -->
+  <div class="modal-overlay hidden" id="mealDetailsOverlay">
+    <div class="card modal-panel meal-details-panel" role="dialog" aria-modal="true" aria-labelledby="mealDetailsTitle">
+      <div class="modal-header">
+        <h3 id="mealDetailsTitle"><i class="fa-solid fa-utensils"></i> Meal Details</h3>
+        <button type="button" id="closeMealDetailsBtn" class="btn-close" aria-label="Close meal details">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="meal-details-body" id="mealDetailsBody">
+        <p class="text-center"><i class="fa-solid fa-spinner fa-spin"></i> Loading meal details...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONFIRM DELETE MODAL -->
+  <div class="modal-overlay hidden" id="confirmDeleteOverlay">
+    <div class="card modal-panel confirm-panel" role="dialog" aria-modal="true" aria-labelledby="confirmDeleteTitle">
+      <div class="modal-header">
+        <h3 id="confirmDeleteTitle"><i class="fa-solid fa-trash"></i> Delete Meal</h3>
+        <button type="button" id="closeConfirmDeleteBtn" class="btn-close" aria-label="Cancel">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <p id="confirmDeleteText">Delete this meal log? This cannot be undone.</p>
+      <div class="confirm-actions">
+        <button type="button" id="cancelConfirmDeleteBtn" class="btn-ghost">Cancel</button>
+        <button type="button" id="acceptConfirmDeleteBtn" class="btn-danger">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=20260927"></script>
 </body>
 </html>

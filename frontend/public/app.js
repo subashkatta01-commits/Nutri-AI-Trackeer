@@ -529,11 +529,12 @@ function psItem(label, value) {
 }
 
 function escapeHtml(value) {
-  return value
+  return String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ========== NUTRITION GOALS ==========
@@ -704,10 +705,639 @@ function setupEventListeners() {
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      closeConfirmDeleteModal();
+      closeMealDetails();
       closeMonthlyModal();
       closeSettingsModal();
     }
   });
+
+  setupHistoryControls();
+}
+
+// ========== MEAL HISTORY ==========
+
+const HISTORY_PAGE_SIZE = 25;
+const SEARCH_DEBOUNCE_MS = 300;
+
+const historyState = {
+  range: 'today',
+  startDate: '',
+  endDate: '',
+  search: '',
+  offset: 0,
+  total: 0,
+  hasMore: false,
+  logs: [],
+  loading: false,
+  // Guards against a slow first page overwriting a newer filter result.
+  requestId: 0
+};
+
+let searchDebounceTimer = null;
+
+function setupHistoryControls() {
+  const rangeSelect = document.getElementById('historyRange');
+  const searchInput = document.getElementById('historySearch');
+  const customRange = document.getElementById('historyCustomRange');
+  const startInput = document.getElementById('historyStartDate');
+  const endInput = document.getElementById('historyEndDate');
+  const applyBtn = document.getElementById('historyApplyRange');
+  const loadMoreBtn = document.getElementById('loadMoreBtn');
+  const closeDetailsBtn = document.getElementById('closeMealDetailsBtn');
+  const detailsOverlay = document.getElementById('mealDetailsOverlay');
+  const closeConfirmBtn = document.getElementById('closeConfirmDeleteBtn');
+  const cancelConfirmBtn = document.getElementById('cancelConfirmDeleteBtn');
+  const acceptConfirmBtn = document.getElementById('acceptConfirmDeleteBtn');
+  const confirmOverlay = document.getElementById('confirmDeleteOverlay');
+
+  // Default the custom range to the last 7 days so the inputs are never blank.
+  if (startInput && endInput) {
+    const today = new Date();
+    const weekAgo = new Date(today);
+    weekAgo.setDate(weekAgo.getDate() - 6);
+    endInput.value = toInputDate(today);
+    startInput.value = toInputDate(weekAgo);
+  }
+
+  if (rangeSelect) {
+    rangeSelect.addEventListener('change', () => {
+      historyState.range = rangeSelect.value;
+      if (customRange) {
+        customRange.classList.toggle('hidden', rangeSelect.value !== 'custom');
+      }
+      if (rangeSelect.value === 'custom') {
+        historyState.startDate = startInput ? startInput.value : '';
+        historyState.endDate = endInput ? endInput.value : '';
+      }
+      loadHistory({ reset: true });
+    });
+  }
+
+  if (applyBtn) {
+    applyBtn.addEventListener('click', () => {
+      historyState.startDate = startInput ? startInput.value : '';
+      historyState.endDate = endInput ? endInput.value : '';
+
+      if (!historyState.startDate || !historyState.endDate) {
+        alert('Please pick both a start and end date.');
+        return;
+      }
+      loadHistory({ reset: true });
+    });
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        historyState.search = searchInput.value.trim();
+        loadHistory({ reset: true });
+      }, SEARCH_DEBOUNCE_MS);
+    });
+  }
+
+  if (loadMoreBtn) {
+    loadMoreBtn.addEventListener('click', () => loadHistory({ reset: false }));
+  }
+
+  if (closeDetailsBtn) closeDetailsBtn.addEventListener('click', closeMealDetails);
+  if (detailsOverlay) {
+    detailsOverlay.addEventListener('click', (e) => {
+      if (e.target === detailsOverlay) closeMealDetails();
+    });
+  }
+
+  if (closeConfirmBtn) closeConfirmBtn.addEventListener('click', closeConfirmDeleteModal);
+  if (cancelConfirmBtn) cancelConfirmBtn.addEventListener('click', closeConfirmDeleteModal);
+  if (acceptConfirmBtn) acceptConfirmBtn.addEventListener('click', async () => {
+    const id = pendingDeleteId;
+    closeConfirmDeleteModal();
+    if (id) await deleteMeal(id);
+  });
+  if (confirmOverlay) {
+    confirmOverlay.addEventListener('click', (e) => {
+      if (e.target === confirmOverlay) closeConfirmDeleteModal();
+    });
+  }
+}
+
+function toInputDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function buildHistoryQuery(offset) {
+  const params = new URLSearchParams();
+  params.set('range', historyState.range);
+  params.set('limit', String(HISTORY_PAGE_SIZE));
+  params.set('offset', String(offset));
+
+  if (historyState.range === 'custom') {
+    params.set('startDate', historyState.startDate);
+    params.set('endDate', historyState.endDate);
+  }
+  if (historyState.search) params.set('search', historyState.search);
+
+  return params.toString();
+}
+
+async function loadHistory({ reset = true } = {}) {
+  const offset = reset ? 0 : historyState.offset + HISTORY_PAGE_SIZE;
+  const requestId = historyState.requestId + 1;
+  historyState.requestId = requestId;
+  // Deliberately not blocked by an in-flight request: a filter change must win
+  // over a slow previous request, and the requestId check discards the stale one.
+  historyState.loading = true;
+
+  if (reset) renderHistoryLoading();
+
+  try {
+    const response = await fetch(`/api/history?${buildHistoryQuery(offset)}`, {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+
+    if (handleUnauthorized(response)) return;
+    if (requestId !== historyState.requestId) return;
+
+    if (!response.ok) {
+      renderHistoryRows([], { emptyMessage: 'Could not load meal history. Please try again.' });
+      return;
+    }
+
+    const data = await response.json();
+
+    if (requestId !== historyState.requestId) return;
+
+    historyState.logs = reset ? data.logs : historyState.logs.concat(data.logs);
+    historyState.total = data.total;
+    historyState.hasMore = data.hasMore;
+    historyState.offset = offset;
+
+    renderHistoryRows(historyState.logs);
+    updateHistoryFooter(data);
+    updateHistorySummary(data.totals, data.total, data);
+  } catch (error) {
+    if (requestId !== historyState.requestId) return;
+    console.error('Failed to load history:', error);
+    renderHistoryRows([], { emptyMessage: 'Could not reach the server.' });
+  } finally {
+    if (requestId === historyState.requestId) {
+      historyState.loading = false;
+      setHistoryLoadingState(false);
+    }
+  }
+}
+function setHistoryLoadingState(isLoading) {
+  const loadMoreBtn = document.getElementById('loadMoreBtn');
+  if (loadMoreBtn) {
+    loadMoreBtn.disabled = isLoading;
+    loadMoreBtn.innerHTML = isLoading
+      ? '<i class="fa-solid fa-spinner fa-spin"></i> Loading...'
+      : '<i class="fa-solid fa-arrow-down"></i> Load more';
+  }
+}
+
+function renderHistoryLoading() {
+  const tbody = document.getElementById('historyTableBody');
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center"><i class="fa-solid fa-spinner fa-spin"></i> Loading meal history...</td></tr>';
+  }
+}
+
+function historyEmptyMessage() {
+  if (historyState.search) {
+    return historyState.range === 'all'
+      ? `No meals match "${historyState.search}".`
+      : `No meals match "${historyState.search}" in the selected range.`;
+  }
+  if (historyState.range === 'today') return "You haven't logged any meals today yet.";
+  if (historyState.range === 'yesterday') return 'No meals logged yesterday.';
+  return 'No meals logged in the selected date range.';
+}
+
+function renderHistoryRows(logs, { emptyMessage } = {}) {
+  const tbody = document.getElementById('historyTableBody');
+  if (!tbody) return;
+
+  if (!logs || logs.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="9" class="text-center">${emptyMessage || historyEmptyMessage()}</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = logs.map((log) => {
+    const score = String(log.efficiency_score || 'medium').toLowerCase();
+    const hasItems = Array.isArray(log.detectedItems) && log.detectedItems.length > 0;
+    const searchTerm = historyState.search;
+
+    return `
+      <tr data-id="${log.id}">
+        <td>
+          <span class="cell-primary">${formatLogDateTime(log.created_at)}</span>
+        </td>
+        <td>${escapeHtml(log.meal_type)}</td>
+        <td>
+          <span class="cell-primary">${highlightMatch(escapeHtml(log.meal_name), searchTerm)}</span>
+          ${hasItems ? `<span class="cell-sub">${log.detectedItems.length} item${log.detectedItems.length === 1 ? '' : 's'}</span>` : ''}
+        </td>
+        <td><strong>${log.calories}</strong> kcal</td>
+        <td>${log.protein}g</td>
+        <td>${log.carbs}g</td>
+        <td>${log.fats}g</td>
+        <td><span class="badge ${score}">${escapeHtml(log.efficiency_score)}</span></td>
+        <td>
+          <div class="row-actions">
+            <button class="btn-icon" onclick="openMealDetails(${log.id})" title="View details">
+              <i class="fa-solid fa-eye"></i>
+            </button>
+            <button class="btn-icon" onclick="startEditMeal(${log.id})" title="Edit meal">
+              <i class="fa-solid fa-pen"></i>
+            </button>
+            <button class="btn-icon btn-icon-danger" onclick="requestDeleteMeal(${log.id}, ${JSON.stringify(escapeHtml(log.meal_name)).replace(/"/g, '&quot;')})" title="Delete">
+              <i class="fa-solid fa-trash"></i>
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function updateHistorySummary(totals, total) {
+  const set = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+  };
+
+  set('histTotalCal', totals?.totalCalories || 0);
+  set('histTotalProtein', totals?.totalProtein || 0);
+  set('histTotalCarbs', totals?.totalCarbs || 0);
+  set('histTotalFats', totals?.totalFats || 0);
+  set('historyCount', `${total} meal${total === 1 ? '' : 's'}`);
+}
+
+const RANGE_LABELS = {
+  today: 'Today',
+  yesterday: 'Yesterday',
+  week: 'Last 7 days',
+  month: 'Last 30 days',
+  all: 'All time',
+  custom: 'Custom range'
+};
+
+function updateHistoryFooter(data) {
+  const loadMoreBtn = document.getElementById('loadMoreBtn');
+  const label = document.getElementById('historyRangeLabel');
+
+  if (loadMoreBtn) {
+    loadMoreBtn.classList.toggle('hidden', !data.hasMore);
+  }
+
+  if (label) {
+    const shown = historyState.logs.length;
+    const rangeText = data.range === 'custom' && data.startDate && data.endDate
+      ? `${RANGE_LABELS.custom} (${data.startDate} to ${data.endDate})`
+      : (RANGE_LABELS[data.range] || RANGE_LABELS.today);
+
+    const searchText = historyState.search ? ` matching "${historyState.search}"` : '';
+    label.textContent = data.total === 0
+      ? `${rangeText}${searchText}`
+      : `Showing ${shown} of ${data.total} meal${data.total === 1 ? '' : 's'} - ${rangeText}${searchText}`;
+  }
+}
+
+function formatLogDateTime(value) {
+  const date = new Date(String(value).replace(' ', 'T'));
+  if (isNaN(date.getTime())) return escapeHtml(value);
+
+  const today = new Date();
+  const isToday = date.toDateString() === today.toDateString();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = date.toDateString() === yesterday.toDateString();
+
+  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  if (isToday) return `Today ${time}`;
+  if (isYesterday) return `Yesterday ${time}`;
+
+  return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
+}
+
+// ---------- ROW EDITING ----------
+
+let editingMealId = null;
+
+function startEditMeal(id) {
+  if (editingMealId === id) return;
+
+  if (editingMealId) cancelEditMeal(editingMealId);
+
+  const log = historyState.logs.find((item) => item.id === id);
+  if (!log) return;
+
+  editingMealId = id;
+  const row = document.querySelector(`tr[data-id="${id}"]`);
+  if (!row) {
+    editingMealId = null;
+    return;
+  }
+
+  row.innerHTML = `
+    <td colspan="9">
+      <form class="row-edit-form" onsubmit="saveMealEdit(event, ${id})">
+        <div class="row-edit-grid">
+          <label>
+            <span>Meal name</span>
+            <input type="text" name="mealName" value="${escapeAttr(log.meal_name)}" maxlength="160" required />
+          </label>
+          <label>
+            <span>Type</span>
+            <select name="mealType">
+              ${['Breakfast', 'Lunch', 'Dinner', 'Snack']
+                .map((type) => `<option value="${type}"${type === log.meal_type ? ' selected' : ''}>${type}</option>`)
+                .join('')}
+            </select>
+          </label>
+          <label>
+            <span>Calories</span>
+            <input type="number" name="calories" value="${log.calories}" min="0" max="10000" step="1" />
+          </label>
+          <label>
+            <span>Protein (g)</span>
+            <input type="number" name="protein" value="${log.protein}" min="0" max="1000" step="1" />
+          </label>
+          <label>
+            <span>Carbs (g)</span>
+            <input type="number" name="carbs" value="${log.carbs}" min="0" max="1000" step="1" />
+          </label>
+          <label>
+            <span>Fats (g)</span>
+            <input type="number" name="fats" value="${log.fats}" min="0" max="1000" step="1" />
+          </label>
+          <label>
+            <span>Goal alignment</span>
+            <select name="efficiencyScore">
+              ${['High', 'Medium', 'Low']
+                .map((score) => `<option value="${score}"${score.toLowerCase() === String(log.efficiency_score).toLowerCase() ? ' selected' : ''}>${score}</option>`)
+                .join('')}
+            </select>
+          </label>
+          <label class="row-edit-wide">
+            <span>Advice</span>
+            <input type="text" name="advice" value="${escapeAttr(log.advice || '')}" maxlength="1000" />
+          </label>
+        </div>
+        <div class="row-edit-actions">
+          <button type="submit" class="btn-save-edit"><i class="fa-solid fa-check"></i> Save</button>
+          <button type="button" class="btn-ghost" onclick="cancelEditMeal(${id})">Cancel</button>
+        </div>
+      </form>
+    </td>
+  `;
+
+  const firstInput = row.querySelector('input[name="mealName"]');
+  if (firstInput) firstInput.focus();
+}
+
+function cancelEditMeal(id) {
+  if (editingMealId === id) editingMealId = null;
+  loadHistory({ reset: true });
+}
+
+async function saveMealEdit(event, id) {
+  event.preventDefault();
+  const form = event.target;
+  const submitBtn = form.querySelector('button[type="submit"]');
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+  }
+
+  const payload = {
+    mealName: form.mealName.value.trim(),
+    mealType: form.mealType.value,
+    calories: Number(form.calories.value),
+    protein: Number(form.protein.value),
+    carbs: Number(form.carbs.value),
+    fats: Number(form.fats.value),
+    efficiencyScore: form.efficiencyScore.value,
+    advice: form.advice.value.trim()
+  };
+
+  try {
+    const response = await fetch(`/api/logs/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (handleUnauthorized(response)) return;
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      alert(data.error || 'Failed to update meal log.');
+      return;
+    }
+
+    editingMealId = null;
+    await loadHistory({ reset: true });
+    loadDailyData();
+  } catch (error) {
+    alert('Error: ' + error.message);
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = '<i class="fa-solid fa-check"></i> Save';
+    }
+  }
+}
+
+// ---------- DETAILS MODAL ----------
+
+let detailCache = new Map();
+
+async function openMealDetails(id) {
+  const overlay = document.getElementById('mealDetailsOverlay');
+  const body = document.getElementById('mealDetailsBody');
+  if (!overlay || !body) return;
+
+  overlay.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  body.innerHTML = '<p class="text-center"><i class="fa-solid fa-spinner fa-spin"></i> Loading meal details...</p>';
+
+  try {
+    let log = detailCache.get(id);
+
+    if (!log) {
+      const response = await fetch(`/api/logs/${id}`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+
+      if (handleUnauthorized(response)) return;
+
+      const data = await response.json();
+      if (!response.ok) {
+        body.innerHTML = `<p class="message error">${escapeHtml(data.error || 'Could not load this meal.')}</p>`;
+        return;
+      }
+      log = data.log;
+      detailCache.set(id, log);
+    }
+
+    renderMealDetails(log);
+  } catch (error) {
+    body.innerHTML = `<p class="message error">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderMealDetails(log) {
+  const body = document.getElementById('mealDetailsBody');
+  if (!body) return;
+
+  const title = document.getElementById('mealDetailsTitle');
+  if (title) {
+    title.innerHTML = `<i class="fa-solid fa-utensils"></i> ${escapeHtml(log.meal_name)}`;
+  }
+
+  const items = Array.isArray(log.detectedItems) ? log.detectedItems : [];
+
+  body.innerHTML = `
+    ${log.imageBase64
+      ? `<img class="meal-details-image" src="${escapeAttr(log.imageBase64)}" alt="Photo of ${escapeAttr(log.meal_name)}" />`
+      : ''}
+
+    <div class="detail-meta">
+      <span class="detail-meta-item"><i class="fa-regular fa-clock"></i> ${formatLogDateTime(log.created_at)}</span>
+      <span class="detail-meta-item"><i class="fa-solid fa-tag"></i> ${escapeHtml(log.meal_type)}</span>
+      <span class="detail-meta-item"><i class="fa-solid fa-dumbbell"></i> ${escapeHtml(log.category || 'N/A')}</span>
+      <span class="detail-meta-item">
+        <span class="badge ${String(log.efficiency_score || 'medium').toLowerCase()}">${escapeHtml(log.efficiency_score)}</span>
+      </span>
+    </div>
+
+    ${log.originalInput
+      ? `<div class="detail-block">
+           <h4><i class="fa-regular fa-pen-to-square"></i> Your description</h4>
+           <p class="detail-text">${escapeHtml(log.originalInput)}</p>
+         </div>`
+      : ''}
+
+    <div class="detail-block">
+      <h4><i class="fa-solid fa-bolt"></i> Nutrition</h4>
+      <div class="detail-macros">
+        <div class="detail-macro detail-macro-cal">
+          <span class="detail-macro-value">${log.calories}</span>
+          <span class="detail-macro-label">kcal</span>
+        </div>
+        <div class="detail-macro detail-macro-protein">
+          <span class="detail-macro-value">${log.protein}g</span>
+          <span class="detail-macro-label">Protein</span>
+        </div>
+        <div class="detail-macro detail-macro-carbs">
+          <span class="detail-macro-value">${log.carbs}g</span>
+          <span class="detail-macro-label">Carbs</span>
+        </div>
+        <div class="detail-macro detail-macro-fats">
+          <span class="detail-macro-value">${log.fats}g</span>
+          <span class="detail-macro-label">Fats</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-block">
+      <h4><i class="fa-solid fa-list-ul"></i> Detected foods</h4>
+      ${items.length > 0
+        ? `<ul class="detail-items">
+             ${items.map((item) => `
+               <li>
+                 <span class="detail-item-name">${escapeHtml(item.name)}</span>
+                 <span class="detail-item-portion">${escapeHtml(item.estimatedPortion || '')}</span>
+               </li>
+             `).join('')}
+           </ul>`
+        : '<p class="detail-text detail-muted">No individual foods were recorded for this meal.</p>'}
+    </div>
+
+    ${log.goalAlignmentReason
+      ? `<div class="detail-block">
+           <h4><i class="fa-solid fa-bullseye"></i> Goal alignment</h4>
+           <p class="detail-text">${escapeHtml(log.goalAlignmentReason)}</p>
+         </div>`
+      : ''}
+
+    ${log.advice
+      ? `<div class="detail-block">
+           <h4><i class="fa-solid fa-lightbulb"></i> Advice</h4>
+           <p class="detail-text">${escapeHtml(log.advice)}</p>
+         </div>`
+      : ''}
+
+    <div class="detail-actions">
+      <button type="button" class="btn-save-edit" onclick="closeMealDetails(); startEditMeal(${log.id})">
+        <i class="fa-solid fa-pen"></i> Edit meal
+      </button>
+      <button type="button" class="btn-ghost" onclick="closeMealDetails()">Close</button>
+    </div>
+  `;
+}
+
+function closeMealDetails() {
+  const overlay = document.getElementById('mealDetailsOverlay');
+  if (!overlay) return;
+  overlay.classList.add('hidden');
+  if (document.getElementById('confirmDeleteOverlay')?.classList.contains('hidden')) {
+    document.body.style.overflow = '';
+  }
+}
+
+// ---------- DELETE (with confirm modal) ----------
+
+let pendingDeleteId = null;
+
+function requestDeleteMeal(id, mealName) {
+  pendingDeleteId = id;
+  const overlay = document.getElementById('confirmDeleteOverlay');
+  const text = document.getElementById('confirmDeleteText');
+  if (text) {
+    text.textContent = mealName
+      ? `Delete "${mealName}"? This cannot be undone.`
+      : 'Delete this meal log? This cannot be undone.';
+  }
+  if (overlay) {
+    overlay.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+  }
+}
+
+function closeConfirmDeleteModal() {
+  const overlay = document.getElementById('confirmDeleteOverlay');
+  pendingDeleteId = null;
+  if (!overlay) return;
+  overlay.classList.add('hidden');
+  if (document.getElementById('mealDetailsOverlay')?.classList.contains('hidden')) {
+    document.body.style.overflow = '';
+  }
+}
+
+// ---------- SHARED HTML ESCAPING ----------
+// escapeHtml/escapeAttr are defined once, near the top of this file.
+
+function escapeAttr(value) {
+  return escapeHtml(value);
+}
+
+// Wrap the search term in <mark> after the surrounding text has been escaped.
+function highlightMatch(escapedText, term) {
+  if (!term) return escapedText;
+
+  const needle = escapeHtml(term).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return escapedText.replace(new RegExp(needle, 'gi'), (match) => `<mark>${match}</mark>`);
 }
 
 // ========== IMAGE HANDLING ==========
@@ -876,7 +1506,7 @@ async function loadDailyData() {
 
     const data = await response.json();
     updateDailyDisplay(data.totals, data.logs);
-    updateHistoryTable(data.logs);
+    loadHistory({ reset: true });
   } catch (error) {
     console.error('Failed to load daily data:', error);
   }
@@ -1014,47 +1644,26 @@ function updateMacroChart(totals) {
 }
 
 function updateHistoryTable(logs) {
-  const tbody = document.getElementById('historyTableBody');
-  if (!logs || logs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="text-center">No meals logged yet.</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = logs.map(log => {
-    const time = new Date(log.created_at).toLocaleTimeString();
-    return `
-      <tr>
-        <td>${time}</td>
-        <td>${log.meal_type}</td>
-        <td>${log.meal_name}</td>
-        <td>${log.calories} kcal</td>
-        <td>${log.protein}g</td>
-        <td>${log.carbs}g</td>
-        <td>${log.fats}g</td>
-        <td><span class="badge ${log.efficiency_score.toLowerCase()}">${log.efficiency_score}</span></td>
-        <td>
-          <button class="btn-icon" onclick="deleteMeal(${log.id})" title="Delete">
-            <i class="fa-solid fa-trash"></i>
-          </button>
-        </td>
-      </tr>
-    `;
-  }).join('');
+  renderHistoryRows(logs);
 }
 
 async function deleteMeal(id) {
-  if (!confirm('Delete this meal log?')) return;
-
   try {
     const response = await fetch(`/api/logs/${id}`, {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${authToken}` }
     });
 
+    if (handleUnauthorized(response)) return;
+
     if (response.ok) {
+      detailCache.delete(id);
+      if (editingMealId === id) editingMealId = null;
+      await loadHistory({ reset: true });
       loadDailyData();
     } else {
-      alert('Failed to delete meal log');
+      const data = await response.json().catch(() => ({}));
+      alert(data.error || 'Failed to delete meal log');
     }
   } catch (error) {
     alert('Error: ' + error.message);
@@ -1073,6 +1682,9 @@ async function handleClearAll() {
     const data = await response.json();
     if (response.ok) {
       alert(`Deleted ${data.deletedCount} meal logs`);
+      detailCache.clear();
+      editingMealId = null;
+      await loadHistory({ reset: true });
       loadDailyData();
     }
   } catch (error) {
@@ -1151,3 +1763,19 @@ function displayMonthlyChart(data) {
     }
   });
 }
+
+// ========== INLINE HANDLER EXPORTS ==========
+// The history table and modals use inline onclick/onsubmit attributes, so these
+// must be reachable from the global scope.
+
+Object.assign(window, {
+  openMealDetails,
+  closeMealDetails,
+  startEditMeal,
+  cancelEditMeal,
+  saveMealEdit,
+  requestDeleteMeal,
+  closeConfirmDeleteModal,
+  deleteMeal,
+  loadHistory
+});
