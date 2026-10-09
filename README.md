@@ -11,7 +11,11 @@ cp .env.example .env   # then fill in your API key
 npm start
 ```
 
-The app runs on `http://localhost:3001` by default (override with `PORT`).
+The app runs on `http://localhost:3001` by default (override with `PORT`). When the
+frontend is served from a separate local origin, the server allows ports 3000 and
+5500 on `localhost` and `127.0.0.1`. Set `CORS_ORIGIN` to a comma-separated list
+of exact origins to use a different allowlist, for example
+`CORS_ORIGIN=http://localhost:5173`.
 
 ## AI provider
 

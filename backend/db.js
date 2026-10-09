@@ -58,6 +58,45 @@ db.exec(`
     advice TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- One weight entry per calendar day, so the progress chart never has two
+  -- points for the same date to fight over.
+  CREATE TABLE IF NOT EXISTS weight_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    weight_kg REAL NOT NULL,
+    logged_on TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, logged_on),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  -- Water intake, one row per day per user. Same upsert-by-date shape as
+  -- weight_logs so a re-log replaces the day instead of adding a second entry.
+  CREATE TABLE IF NOT EXISTS water_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    intake_ml INTEGER NOT NULL,
+    goal_ml INTEGER NOT NULL DEFAULT 2500,
+    logged_on TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, logged_on),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  -- Progress photos are stored as base64 in their own table rather than on
+  -- meal_logs: they are large, and they are read one at a time by the
+  -- photo-comparison view instead of alongside every list query.
+  CREATE TABLE IF NOT EXISTS progress_photos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    image_base64 TEXT NOT NULL,
+    note TEXT,
+    weight_kg REAL,
+    logged_on TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
 `);
 
 // Step 2: Handle migrations - add columns that did not exist in older databases
@@ -94,7 +133,28 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_meal_logs_user_date ON meal_logs(user_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
   CREATE INDEX IF NOT EXISTS idx_meal_logs_user_name ON meal_logs(user_id, meal_name);
+  CREATE INDEX IF NOT EXISTS idx_weight_logs_user_date ON weight_logs(user_id, logged_on);
+  CREATE INDEX IF NOT EXISTS idx_water_logs_user_date ON water_logs(user_id, logged_on);
+  CREATE INDEX IF NOT EXISTS idx_progress_photos_user_date ON progress_photos(user_id, logged_on);
 `);
+
+// ========== HELPERS ==========
+
+// Used when a water entry predates an explicit goal, and as the fallback when a
+// stored goal is somehow zero (which would otherwise divide by zero).
+export const DEFAULT_WATER_GOAL_ML = 2500;
+
+/**
+ * Format a Date as YYYY-MM-DD in local time, matching the 'localtime' modifier
+ * used by every SQL date filter.
+ */
+function toLocalDateString(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 
 // ========== USER MANAGEMENT ==========
 
@@ -130,14 +190,16 @@ export function createUser(username, email, password) {
 /**
  * Authenticate user
  */
-export function authenticateUser(email, password) {
+export function authenticateUser(identifier, password) {
+  const normalizedIdentifier = String(identifier || '').trim();
   const passwordHash = hashPassword(password);
+
   const stmt = db.prepare(`
-    SELECT id, username, email FROM users 
-    WHERE email = ? AND password_hash = ?
+    SELECT id, username, email FROM users
+    WHERE (username = ? OR email = ?) AND password_hash = ?
   `);
-  
-  return stmt.get(email, passwordHash);
+
+  return stmt.get(normalizedIdentifier, normalizedIdentifier.toLowerCase(), passwordHash);
 }
 
 /**
@@ -263,7 +325,307 @@ export function upsertUserProfile(userId, profile) {
     );
   }
 
+  // Seed today's weight from the profile so the progress chart has a starting
+  // point on day one. Insert-only: a weight the user checked in themselves for
+  // today always wins, even when the profile is edited afterwards.
+  db.prepare(`
+    INSERT INTO weight_logs (user_id, weight_kg, logged_on)
+    VALUES (?, ?, ?)
+    ON CONFLICT(user_id, logged_on) DO NOTHING
+  `).run(userId, profile.weightKg, toLocalDateString(new Date()));
+
   return getUserProfile(userId);
+}
+
+// ========== WEIGHT LOGS ==========
+
+/**
+ * Shape a weight row for the API: the column is weight_kg, clients want weightKg.
+ */
+function formatWeightLog(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    weightKg: row.weight_kg,
+    loggedOn: row.logged_on
+  };
+}
+
+/**
+ * Store a weight for a given day, replacing any existing entry for that day so
+ * re-checking in on the same morning corrects the number instead of adding a
+ * second point. Returns the stored row.
+ */
+export function saveWeightLog(userId, weightKg, loggedOn) {
+  db.prepare(`
+    INSERT INTO weight_logs (user_id, weight_kg, logged_on)
+    VALUES (?, ?, ?)
+    ON CONFLICT(user_id, logged_on) DO UPDATE SET weight_kg = excluded.weight_kg
+  `).run(userId, weightKg, loggedOn);
+
+  return formatWeightLog(
+    db.prepare('SELECT id, weight_kg, logged_on FROM weight_logs WHERE user_id = ? AND logged_on = ?')
+      .get(userId, loggedOn)
+  );
+}
+
+/**
+ * Most recent weight entries, newest first.
+ */
+export function getWeightLogs(userId, limit = 400) {
+  return db.prepare(`
+    SELECT id, weight_kg, logged_on
+    FROM weight_logs
+    WHERE user_id = ?
+    ORDER BY logged_on DESC
+    LIMIT ?
+  `).all(userId, limit).map(formatWeightLog);
+}
+
+/**
+ * Delete a single weight entry.
+ */
+export function deleteWeightLog(id, userId) {
+  return db.prepare('DELETE FROM weight_logs WHERE id = ? AND user_id = ?').run(id, userId);
+}
+
+// ========== WATER INTAKE ==========
+
+/**
+ * Shape a water row for the API: columns are intake_ml/goal_ml, clients want
+ * camelCase. Percentages are derived here so every consumer reports progress
+ * the same way.
+ */
+function formatWaterLog(row) {
+  if (!row) return null;
+
+  const goal = row.goal_ml > 0 ? row.goal_ml : DEFAULT_WATER_GOAL_ML;
+  const percent = Math.min(Math.round((row.intake_ml / goal) * 100), 100);
+
+  return {
+    id: row.id,
+    date: row.logged_on,
+    intakeMl: row.intake_ml,
+    goalMl: goal,
+    percent,
+    goalReached: row.intake_ml >= goal
+  };
+}
+
+/**
+ * Store today's water intake, replacing any existing entry for that day so a
+ * corrected number does not stack up on the day already logged.
+ */
+export function saveWaterLog(userId, intakeMl, loggedOn, goalMl = DEFAULT_WATER_GOAL_ML) {
+  db.prepare(`
+    INSERT INTO water_logs (user_id, intake_ml, goal_ml, logged_on)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(user_id, logged_on) DO UPDATE SET
+      intake_ml = excluded.intake_ml,
+      goal_ml = excluded.goal_ml
+  `).run(userId, intakeMl, goalMl, loggedOn);
+
+  return formatWaterLog(
+    db.prepare('SELECT id, intake_ml, goal_ml, logged_on FROM water_logs WHERE user_id = ? AND logged_on = ?')
+      .get(userId, loggedOn)
+  );
+}
+
+/**
+ * Read the water log for a single day, or null when nothing is logged yet.
+ */
+export function getWaterLogForDate(userId, date) {
+  return formatWaterLog(
+    db.prepare(`
+      SELECT id, intake_ml, goal_ml, logged_on
+      FROM water_logs
+      WHERE user_id = ? AND logged_on = ?
+    `).get(userId, date)
+  );
+}
+
+/**
+ * Water totals for an inclusive date range, oldest first, for the 7-day strip.
+ * Days with no entry are omitted rather than zero-filled: the client only draws
+ * bars for days the user actually tracked, so an untracked day is not shown as
+ * a day they drank nothing.
+ */
+export function getWaterLogs(userId, startDate, endDate, limit = 31) {
+  return db.prepare(`
+    SELECT id, intake_ml, goal_ml, logged_on
+    FROM water_logs
+    WHERE user_id = ? AND logged_on BETWEEN ? AND ?
+    ORDER BY logged_on ASC
+    LIMIT ?
+  `).all(userId, startDate, endDate, limit).map(formatWaterLog);
+}
+
+/**
+ * Delete a single water entry.
+ */
+export function deleteWaterLog(id, userId) {
+  return db.prepare('DELETE FROM water_logs WHERE id = ? AND user_id = ?').run(id, userId);
+}
+
+// ========== PROGRESS PHOTOS ==========
+
+/**
+ * Shape a progress-photo row. The base64 blob is only included when
+ * `includeImage` is set: the list endpoint omits it so the gallery renders from
+ * metadata alone, and the single-photo endpoint includes it.
+ */
+function formatProgressPhoto(row, { includeImage = false } = {}) {
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    date: row.logged_on,
+    note: row.note || null,
+    weightKg: row.weight_kg ?? null,
+    ...(includeImage ? { imageBase64: row.image_base64 } : {})
+  };
+}
+
+/**
+ * Store a progress photo. Photos are compressed client-side before upload, and
+ * `loggedOn` is explicit so a back-dated entry can be attached to the right
+ * point on the weight chart.
+ */
+export function saveProgressPhoto(userId, { imageBase64, note, weightKg, loggedOn }) {
+  const info = db.prepare(`
+    INSERT INTO progress_photos (user_id, image_base64, note, weight_kg, logged_on)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    userId,
+    imageBase64,
+    note || null,
+    weightKg ?? null,
+    loggedOn
+  );
+
+  return getProgressPhotoById(info.lastInsertRowid, userId, { includeImage: true });
+}
+
+/**
+ * Progress photos newest first, without the base64 payloads.
+ */
+export function getProgressPhotos(userId, limit = 60) {
+  return db.prepare(`
+    SELECT id, note, weight_kg, logged_on
+    FROM progress_photos
+    WHERE user_id = ?
+    ORDER BY logged_on DESC, id DESC
+    LIMIT ?
+  `).all(userId, limit).map((row) => formatProgressPhoto(row));
+}
+
+/**
+ * A single photo including its image. Only the before/after comparison view
+ * reads the two payloads it actually needs, rather than loading the whole
+ * gallery's worth of base64.
+ */
+export function getProgressPhotoById(id, userId) {
+  const row = db.prepare(`
+    SELECT id, note, weight_kg, logged_on, image_base64
+    FROM progress_photos
+    WHERE id = ? AND user_id = ?
+  `).get(id, userId);
+
+  return formatProgressPhoto(row, { includeImage: true });
+}
+
+/**
+ * The oldest and newest photos, used as the before/after pair.
+ */
+export function getProgressPhotoEndpoints(userId) {
+  const first = db.prepare(`
+    SELECT id, note, weight_kg, logged_on, image_base64
+    FROM progress_photos
+    WHERE user_id = ?
+    ORDER BY logged_on ASC, id ASC
+    LIMIT 1
+  `).get(userId);
+
+  const last = db.prepare(`
+    SELECT id, note, weight_kg, logged_on, image_base64
+    FROM progress_photos
+    WHERE user_id = ?
+    ORDER BY logged_on DESC, id DESC
+    LIMIT 1
+  `).get(userId);
+
+  return {
+    first: formatProgressPhoto(first, { includeImage: true }),
+    last: formatProgressPhoto(last, { includeImage: true })
+  };
+}
+
+/**
+ * Delete a single progress photo.
+ */
+export function deleteProgressPhoto(id, userId) {
+  return db.prepare('DELETE FROM progress_photos WHERE id = ? AND user_id = ?').run(id, userId);
+}
+
+// ========== MEAL SUGGESTIONS ==========
+
+/**
+ * Per-macro totals for a single day, for the suggestions engine.
+ *
+ * Reads one day at a time so the engine can compare consecutive days and spot a
+ * repeated meal the user could rotate out.
+ */
+export function getDailyMacroTotals(userId, startDate, endDate) {
+  return db.prepare(`
+    SELECT
+      DATE(created_at, 'localtime') as log_date,
+      IFNULL(SUM(calories), 0) as totalCalories,
+      IFNULL(SUM(protein), 0) as totalProtein,
+      IFNULL(SUM(carbs), 0) as totalCarbs,
+      IFNULL(SUM(fats), 0) as totalFats
+    FROM meal_logs
+    WHERE user_id = ? AND DATE(created_at, 'localtime') BETWEEN ? AND ?
+    GROUP BY DATE(created_at, 'localtime')
+    ORDER BY log_date ASC
+  `).all(userId, startDate, endDate);
+}
+
+/**
+ * Meal-type breakdown over a range: how many of each type were logged and how
+ * many hit a "High" efficiency score. Rotating a meal type the user consistently
+ * rates "Low" is the main lever the suggestions engine pulls.
+ */
+export function getMealTypePerformance(userId, startDate, endDate) {
+  return db.prepare(`
+    SELECT
+      meal_type as mealType,
+      COUNT(*) as timesLogged,
+      IFNULL(SUM(calories), 0) as totalCalories,
+      SUM(CASE WHEN efficiency_score = 'High' THEN 1 ELSE 0 END) as highScores,
+      SUM(CASE WHEN efficiency_score = 'Low' THEN 1 ELSE 0 END) as lowScores
+    FROM meal_logs
+    WHERE user_id = ? AND DATE(created_at, 'localtime') BETWEEN ? AND ?
+    GROUP BY meal_type
+  `).all(userId, startDate, endDate);
+}
+
+/**
+ * Most frequently logged meal names in a range, with their average macros.
+ * Used to suggest rotating out a meal the user eats on autopilot.
+ */
+export function getFrequentMeals(userId, startDate, endDate, limit = 5) {
+  return db.prepare(`
+    SELECT
+      meal_name as mealName,
+      COUNT(*) as timesLogged,
+      ROUND(IFNULL(AVG(calories), 0)) as averageCalories,
+      ROUND(IFNULL(AVG(protein), 0)) as averageProtein
+    FROM meal_logs
+    WHERE user_id = ? AND DATE(created_at, 'localtime') BETWEEN ? AND ?
+    GROUP BY LOWER(TRIM(meal_name))
+    ORDER BY timesLogged DESC, mealName ASC
+    LIMIT ?
+  `).all(userId, startDate, endDate, limit);
 }
 
 // ========== MEAL LOGS ==========
@@ -575,4 +937,37 @@ export function deleteMealLog(id, userId) {
 export function deleteAllLogs(userId) {
   const stmt = db.prepare('DELETE FROM meal_logs WHERE user_id = ?');
   return stmt.run(userId);
+}
+
+// ========== INSIGHTS DATA ==========
+
+// The insights endpoint bounds the range to 90 days, so this ceiling is a
+// safety net for pathological data rather than a normal limit.
+const MAX_MEAL_ACTIVITY_ROWS = 5000;
+
+/**
+ * Raw per-meal rows for a date range, consumed by the insights analytics.
+ *
+ * Daily totals, streaks, meal frequency and meal timing are all derived from
+ * this single read, so every figure on the Insights screen describes the same
+ * set of meals. Hours and minutes are extracted in SQL because created_at is
+ * stored in UTC while the analytics must report the user's local clock.
+ */
+export function getMealActivity(userId, startDate, endDate) {
+  const stmt = db.prepare(`
+    SELECT
+      DATE(created_at, 'localtime') as log_date,
+      CAST(strftime('%H', created_at, 'localtime') AS INTEGER) as log_hour,
+      CAST(strftime('%M', created_at, 'localtime') AS INTEGER) as log_minute,
+      meal_type,
+      meal_name,
+      LOWER(TRIM(meal_name)) as name_key,
+      calories, protein, carbs, fats, efficiency_score
+    FROM meal_logs
+    WHERE user_id = ? AND DATE(created_at, 'localtime') BETWEEN ? AND ?
+    ORDER BY created_at ASC
+    LIMIT ?
+  `);
+
+  return stmt.all(userId, startDate, endDate, MAX_MEAL_ACTIVITY_ROWS);
 }

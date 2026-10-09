@@ -6,7 +6,7 @@
   <title>Smart AI Diet & Macro Tracker</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="style.css?v=20260923">
+  <link rel="stylesheet" href="style.css?v=20261009">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -26,14 +26,14 @@
         <form id="loginForm" class="auth-form">
           <h2>Login</h2>
           <div class="form-group">
-            <input type="email" id="loginEmail" placeholder="Email" required>
+            <input type="text" id="loginUsername" placeholder="Username" required>
           </div>
           <div class="form-group">
             <input type="password" id="loginPassword" placeholder="Password" required>
           </div>
           <button type="submit" class="btn-primary">Sign In</button>
           <p class="auth-toggle">Don't have an account? <a href="#" id="toggleToSignup">Sign up</a></p>
-          <div id="loginError" class="error-message"></div>
+          <div id="loginError" class="error-message" role="alert" aria-live="polite"></div>
         </form>
 
         <!-- Signup Form -->
@@ -218,399 +218,565 @@
 
   <!-- MAIN APP SCREEN (shown after login) -->
   <div id="appScreen" class="app-screen hidden">
+    <div class="app-shell">
 
-  <header class="app-header">
-    <div class="logo">
-      <i class="fa-solid fa-utensils"></i>
-      <span>NutriAI Tracker</span>
-    </div>
-    <div class="header-actions">
-      <div class="target-container">
-        <label for="calorieGoalInput">Daily Calorie Target:</label>
-        <input type="number" id="calorieGoalInput" value="2000" min="500" max="10000" step="50">
-        <span>kcal</span>
-      </div>
-      <button type="button" id="settingsBtn" class="btn-icon" title="Settings">
-        <i class="fa-solid fa-gear"></i>
-      </button>
-      <button type="button" id="monthlyChartBtn" class="btn-monthly">
-        <i class="fa-solid fa-chart-line"></i> Monthly Chart
-      </button>
-      <button type="button" id="logoutBtn" class="btn-clear">
-        <i class="fa-solid fa-sign-out-alt"></i> Logout
-      </button>
-    </div>
-  </header>
+      <!-- ===== LEFT SIDEBAR / NAVIGATOR ===== -->
+      <aside class="sidebar">
+        <div class="logo">
+          <i class="fa-solid fa-utensils"></i>
+          <span>NutriAI Tracker</span>
+        </div>
 
-  <!-- SETTINGS/GOALS MODAL -->
-  <div class="modal-overlay hidden" id="settingsModalOverlay">
-    <div class="card modal-panel settings-modal">
-      <div class="modal-header">
-        <h3><i class="fa-solid fa-sliders"></i> Settings</h3>
-        <button type="button" id="closeSettingsBtn" class="btn-close">
-          <i class="fa-solid fa-xmark"></i>
-        </button>
-      </div>
+        <nav class="side-nav" aria-label="Primary">
+          <button type="button" class="nav-item active" data-view="log">
+            <i class="fa-solid fa-wand-magic-sparkles"></i>
+            <span>Analyze &amp; Log Meal</span>
+          </button>
+          <button type="button" class="nav-item" data-view="insights">
+            <i class="fa-solid fa-chart-simple"></i>
+            <span>Insights &amp; Progress</span>
+          </button>
+          <button type="button" class="nav-item" data-view="accounts">
+            <i class="fa-solid fa-user"></i>
+            <span>Accounts</span>
+          </button>
+          <button type="button" class="nav-item" data-view="weight">
+            <i class="fa-solid fa-weight-scale"></i>
+            <span>Weight Progress</span>
+          </button>
+          <button type="button" class="nav-item" data-view="weekly">
+            <i class="fa-solid fa-calendar-week"></i>
+            <span>Week by Week</span>
+          </button>
+          <button type="button" class="nav-item" data-view="frequent">
+            <i class="fa-solid fa-bowl-food"></i>
+            <span>Most Frequently Logged Meals</span>
+          </button>
+        </nav>
 
-      <div class="settings-profile-panel">
-        <div class="settings-profile-head">
-          <h4><i class="fa-solid fa-user"></i> Your Profile</h4>
-          <button type="button" id="editProfileBtn" class="btn-secondary">
-            <i class="fa-solid fa-pen"></i> Edit &amp; Recalculate
+        <!-- Footer actions: Monthly Chart + Logout share the same spot -->
+        <div class="sidebar-footer">
+          <button type="button" id="monthlyChartBtn" class="side-action monthly">
+            <i class="fa-solid fa-chart-line"></i>
+            <span>Monthly Chart</span>
+          </button>
+          <button type="button" id="logoutBtn" class="side-action logout">
+            <i class="fa-solid fa-sign-out-alt"></i>
+            <span>Logout</span>
           </button>
         </div>
-        <div id="profileSummary" class="profile-summary">Loading your profile...</div>
-      </div>
+      </aside>
 
-      <div class="settings-divider">
-        <span><i class="fa-solid fa-bullseye"></i> Nutrition Targets</span>
-      </div>
+      <!-- ===== RIGHT CONTENT PANE ===== -->
+      <div class="content">
 
-      <form id="goalsForm" class="settings-form">
-        <div class="form-group">
-          <label for="targetCalories">Daily Calorie Target</label>
-          <input type="number" id="targetCalories" min="500" max="10000" step="50" value="2000">
-        </div>
-        <div class="form-group">
-          <label for="targetProtein">Daily Protein (g)</label>
-          <input type="number" id="targetProtein" min="0" max="500" step="1" value="150">
-        </div>
-        <div class="form-group">
-          <label for="targetCarbs">Daily Carbs (g)</label>
-          <input type="number" id="targetCarbs" min="0" max="500" step="1" value="250">
-        </div>
-        <div class="form-group">
-          <label for="targetFats">Daily Fats (g)</label>
-          <input type="number" id="targetFats" min="0" max="500" step="1" value="65">
-        </div>
-        <button type="submit" class="btn-primary">Save Goals</button>
-        <div id="goalsMessage" class="message"></div>
-      </form>
-    </div>
-  </div>
-
-  <!-- DAILY DASHBOARD SUMMARY (always visible after login) -->
-  <section class="summary-dashboard" id="summaryDashboard">
-    <div class="summary-top">
-      <div class="greeting-block">
-        <h2 id="greetingText">Welcome back</h2>
-        <p id="summaryDateLine"></p>
-      </div>
-      <div class="motivational-status start" id="motivationalStatus">
-        <i class="fa-solid fa-bolt"></i>
-        <span id="motivationalText">Log your first meal to start today's tracking.</span>
-      </div>
-    </div>
-
-    <div class="stat-grid">
-      <!-- Calories -->
-      <article class="stat-card calories">
-        <div class="stat-card-head">
-          <span class="stat-icon"><i class="fa-solid fa-fire-flame-curved"></i></span>
-          <span class="stat-label">Calories</span>
-          <span class="stat-pct" id="pctCalories">0%</span>
-        </div>
-        <div class="stat-ring-wrap">
-          <svg class="stat-ring" viewBox="0 0 120 120" aria-hidden="true">
-            <circle class="ring-track" cx="60" cy="60" r="52"></circle>
-            <circle class="ring-fill" id="ringCalories" cx="60" cy="60" r="52"></circle>
-          </svg>
-          <div class="ring-center">
-            <strong id="valueCalories">0</strong>
-            <small>kcal</small>
+        <div class="content-topbar">
+          <div class="topbar-greeting">
+            <h2 id="greetingText">Welcome back</h2>
+            <p id="summaryDateLine"></p>
           </div>
-        </div>
-        <div class="stat-meta">
-          <div class="goal-bar"><div class="goal-bar-fill" id="barCalories"></div></div>
-          <p class="goal-line">of <span id="goalCalories">2000</span> kcal goal</p>
-          <p class="remaining-line" id="remainingCalories">Remaining today: <strong>2000 kcal</strong></p>
-        </div>
-      </article>
-
-      <!-- Protein -->
-      <article class="stat-card protein">
-        <div class="stat-card-head">
-          <span class="stat-icon"><i class="fa-solid fa-dumbbell"></i></span>
-          <span class="stat-label">Protein</span>
-          <span class="stat-pct" id="pctProtein">0%</span>
-        </div>
-        <div class="stat-ring-wrap">
-          <svg class="stat-ring" viewBox="0 0 120 120" aria-hidden="true">
-            <circle class="ring-track" cx="60" cy="60" r="52"></circle>
-            <circle class="ring-fill" id="ringProtein" cx="60" cy="60" r="52"></circle>
-          </svg>
-          <div class="ring-center">
-            <strong id="valueProtein">0</strong>
-            <small>grams</small>
-          </div>
-        </div>
-        <div class="stat-meta">
-          <div class="goal-bar"><div class="goal-bar-fill" id="barProtein"></div></div>
-          <p class="goal-line">of <span id="goalProtein">150</span> g goal</p>
-          <p class="remaining-line" id="remainingProtein">Remaining today: <strong>150g</strong></p>
-        </div>
-      </article>
-
-      <!-- Carbs -->
-      <article class="stat-card carbs">
-        <div class="stat-card-head">
-          <span class="stat-icon"><i class="fa-solid fa-bread-slice"></i></span>
-          <span class="stat-label">Carbs</span>
-          <span class="stat-pct" id="pctCarbs">0%</span>
-        </div>
-        <div class="stat-ring-wrap">
-          <svg class="stat-ring" viewBox="0 0 120 120" aria-hidden="true">
-            <circle class="ring-track" cx="60" cy="60" r="52"></circle>
-            <circle class="ring-fill" id="ringCarbs" cx="60" cy="60" r="52"></circle>
-          </svg>
-          <div class="ring-center">
-            <strong id="valueCarbs">0</strong>
-            <small>grams</small>
-          </div>
-        </div>
-        <div class="stat-meta">
-          <div class="goal-bar"><div class="goal-bar-fill" id="barCarbs"></div></div>
-          <p class="goal-line">of <span id="goalCarbs">250</span> g goal</p>
-          <p class="remaining-line" id="remainingCarbs">Remaining today: <strong>250g</strong></p>
-        </div>
-      </article>
-
-      <!-- Fats -->
-      <article class="stat-card fats">
-        <div class="stat-card-head">
-          <span class="stat-icon"><i class="fa-solid fa-droplet"></i></span>
-          <span class="stat-label">Fat</span>
-          <span class="stat-pct" id="pctFats">0%</span>
-        </div>
-        <div class="stat-ring-wrap">
-          <svg class="stat-ring" viewBox="0 0 120 120" aria-hidden="true">
-            <circle class="ring-track" cx="60" cy="60" r="52"></circle>
-            <circle class="ring-fill" id="ringFats" cx="60" cy="60" r="52"></circle>
-          </svg>
-          <div class="ring-center">
-            <strong id="valueFats">0</strong>
-            <small>grams</small>
-          </div>
-        </div>
-        <div class="stat-meta">
-          <div class="goal-bar"><div class="goal-bar-fill" id="barFats"></div></div>
-          <p class="goal-line">of <span id="goalFats">65</span> g goal</p>
-          <p class="remaining-line" id="remainingFats">Remaining today: <strong>65g</strong></p>
-        </div>
-      </article>
-    </div>
-  </section>
-
-  <main class="dashboard-grid" id="dashboardGrid">
-    
-    <!-- LEFT PANEL: Meal Input Form -->
-    <section class="card input-card">
-      <h2><i class="fa-solid fa-camera"></i> Log Your Meal</h2>
-      <form id="mealForm">
-        
-        <div class="form-row">
-          <div class="form-group">
-            <label for="mealType"><i class="fa-regular fa-clock"></i> Meal Type</label>
-            <select id="mealType">
-              <option value="Breakfast">Breakfast</option>
-              <option value="Lunch">Lunch</option>
-              <option value="Dinner">Dinner</option>
-              <option value="Snack" selected>Snack</option>
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label for="fitnessCategory"><i class="fa-solid fa-bullseye"></i> Dietary Goal</label>
-            <select id="fitnessCategory">
-              <option value="Muscle Gain / Hypertrophy">Muscle Gain / Bulking</option>
-              <option value="Fat Loss / Caloric Deficit">Fat Loss / Deficit</option>
-              <option value="Maintenance & Energy" selected>Maintenance & Energy</option>
-              <option value="Keto / Low Carb">Keto / Low Carb</option>
-              <option value="Endurance Athletics">Endurance Athletics</option>
-            </select>
+          <div class="target-container">
+            <label for="calorieGoalInput">Daily Calorie Target:</label>
+            <input type="number" id="calorieGoalInput" value="2000" min="500" max="10000" step="50">
+            <span>kcal</span>
           </div>
         </div>
 
-        <div class="form-group">
-          <label><i class="fa-solid fa-image"></i> Meal Image (Optional)</label>
-          <div class="upload-box" id="uploadBox">
-            <input type="file" id="imageInput" accept="image/*">
-            <div class="upload-placeholder" id="uploadPlaceholder">
-              <i class="fa-solid fa-cloud-arrow-up"></i>
-              <p>Click or drag image here</p>
+        <!-- ========== VIEW: ANALYZE & LOG MEAL ========== -->
+        <section id="view-log" class="view">
+
+          <!-- DAILY DASHBOARD SUMMARY -->
+          <section class="summary-dashboard" id="summaryDashboard">
+            <div class="summary-top">
+              <div class="motivational-status start" id="motivationalStatus">
+                <i class="fa-solid fa-bolt"></i>
+                <span id="motivationalText">Log your first meal to start today's tracking.</span>
+              </div>
             </div>
-            <div class="preview-box hidden" id="previewBox">
-              <img id="imagePreview" src="" alt="Meal preview">
-              <button type="button" id="removeImgBtn" class="btn-icon"><i class="fa-solid fa-xmark"></i></button>
+
+            <div class="stat-grid">
+              <!-- Calories -->
+              <article class="stat-card calories">
+                <div class="stat-card-head">
+                  <span class="stat-icon"><i class="fa-solid fa-fire-flame-curved"></i></span>
+                  <span class="stat-label">Calories</span>
+                  <span class="stat-pct" id="pctCalories">0%</span>
+                </div>
+                <div class="stat-ring-wrap">
+                  <svg class="stat-ring" viewBox="0 0 120 120" aria-hidden="true">
+                    <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+                    <circle class="ring-fill" id="ringCalories" cx="60" cy="60" r="52"></circle>
+                  </svg>
+                  <div class="ring-center">
+                    <strong id="valueCalories">0</strong>
+                    <small>kcal</small>
+                  </div>
+                </div>
+                <div class="stat-meta">
+                  <div class="goal-bar"><div class="goal-bar-fill" id="barCalories"></div></div>
+                  <p class="goal-line">of <span id="goalCalories">2000</span> kcal goal</p>
+                  <p class="remaining-line" id="remainingCalories">Remaining today: <strong>2000 kcal</strong></p>
+                </div>
+              </article>
+
+              <!-- Protein -->
+              <article class="stat-card protein">
+                <div class="stat-card-head">
+                  <span class="stat-icon"><i class="fa-solid fa-dumbbell"></i></span>
+                  <span class="stat-label">Protein</span>
+                  <span class="stat-pct" id="pctProtein">0%</span>
+                </div>
+                <div class="stat-ring-wrap">
+                  <svg class="stat-ring" viewBox="0 0 120 120" aria-hidden="true">
+                    <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+                    <circle class="ring-fill" id="ringProtein" cx="60" cy="60" r="52"></circle>
+                  </svg>
+                  <div class="ring-center">
+                    <strong id="valueProtein">0</strong>
+                    <small>grams</small>
+                  </div>
+                </div>
+                <div class="stat-meta">
+                  <div class="goal-bar"><div class="goal-bar-fill" id="barProtein"></div></div>
+                  <p class="goal-line">of <span id="goalProtein">150</span> g goal</p>
+                  <p class="remaining-line" id="remainingProtein">Remaining today: <strong>150g</strong></p>
+                </div>
+              </article>
+
+              <!-- Carbs -->
+              <article class="stat-card carbs">
+                <div class="stat-card-head">
+                  <span class="stat-icon"><i class="fa-solid fa-bread-slice"></i></span>
+                  <span class="stat-label">Carbs</span>
+                  <span class="stat-pct" id="pctCarbs">0%</span>
+                </div>
+                <div class="stat-ring-wrap">
+                  <svg class="stat-ring" viewBox="0 0 120 120" aria-hidden="true">
+                    <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+                    <circle class="ring-fill" id="ringCarbs" cx="60" cy="60" r="52"></circle>
+                  </svg>
+                  <div class="ring-center">
+                    <strong id="valueCarbs">0</strong>
+                    <small>grams</small>
+                  </div>
+                </div>
+                <div class="stat-meta">
+                  <div class="goal-bar"><div class="goal-bar-fill" id="barCarbs"></div></div>
+                  <p class="goal-line">of <span id="goalCarbs">250</span> g goal</p>
+                  <p class="remaining-line" id="remainingCarbs">Remaining today: <strong>250g</strong></p>
+                </div>
+              </article>
+
+              <!-- Fats -->
+              <article class="stat-card fats">
+                <div class="stat-card-head">
+                  <span class="stat-icon"><i class="fa-solid fa-droplet"></i></span>
+                  <span class="stat-label">Fat</span>
+                  <span class="stat-pct" id="pctFats">0%</span>
+                </div>
+                <div class="stat-ring-wrap">
+                  <svg class="stat-ring" viewBox="0 0 120 120" aria-hidden="true">
+                    <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+                    <circle class="ring-fill" id="ringFats" cx="60" cy="60" r="52"></circle>
+                  </svg>
+                  <div class="ring-center">
+                    <strong id="valueFats">0</strong>
+                    <small>grams</small>
+                  </div>
+                </div>
+                <div class="stat-meta">
+                  <div class="goal-bar"><div class="goal-bar-fill" id="barFats"></div></div>
+                  <p class="goal-line">of <span id="goalFats">65</span> g goal</p>
+                  <p class="remaining-line" id="remainingFats">Remaining today: <strong>65g</strong></p>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <main class="dashboard-grid" id="dashboardGrid">
+
+            <!-- LEFT PANEL: Meal Input Form -->
+            <section class="card input-card">
+              <h2><i class="fa-solid fa-camera"></i> Log Your Meal</h2>
+              <form id="mealForm">
+
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="mealType"><i class="fa-regular fa-clock"></i> Meal Type</label>
+                    <select id="mealType">
+                      <option value="Breakfast">Breakfast</option>
+                      <option value="Lunch">Lunch</option>
+                      <option value="Dinner">Dinner</option>
+                      <option value="Snack" selected>Snack</option>
+                    </select>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="fitnessCategory"><i class="fa-solid fa-bullseye"></i> Dietary Goal</label>
+                    <select id="fitnessCategory" disabled>
+                      <option value="Muscle Gain / Hypertrophy">Muscle Gain / Bulking</option>
+                      <option value="Fat Loss / Caloric Deficit">Fat Loss / Deficit</option>
+                      <option value="Maintenance & Energy" selected>Maintenance & Energy</option>
+                      <option value="Keto / Low Carb">Keto / Low Carb</option>
+                      <option value="Endurance Athletics">Endurance Athletics</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label><i class="fa-solid fa-image"></i> Meal Image (Optional)</label>
+                  <div class="upload-box" id="uploadBox">
+                    <input type="file" id="imageInput" accept="image/*">
+                    <div class="upload-placeholder" id="uploadPlaceholder">
+                      <i class="fa-solid fa-cloud-arrow-up"></i>
+                      <p>Click or drag image here</p>
+                    </div>
+                    <div class="preview-box hidden" id="previewBox">
+                      <img id="imagePreview" src="" alt="Meal preview">
+                      <button type="button" id="removeImgBtn" class="btn-icon"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label for="textInput"><i class="fa-solid fa-pen"></i> Description / Ingredients</label>
+                  <textarea id="textInput" rows="3" placeholder="e.g., Grilled chicken breast with 1 cup brown rice and steamed broccoli"></textarea>
+                </div>
+
+                <button type="submit" id="submitBtn" class="btn-primary">
+                  <i class="fa-solid fa-wand-magic-sparkles"></i> Analyze & Log Meal
+                </button>
+
+              </form>
+            </section>
+
+            <!-- RIGHT PANEL: Dashboard & Daily Summary -->
+            <section class="dashboard-panel" id="dashboardPanel">
+
+              <!-- Calorie Progress Banner -->
+              <div class="card summary-card">
+                <div class="summary-header">
+                  <h3>Daily Calorie Budget</h3>
+                  <span id="calorieCountText">0 / 2000 kcal</span>
+                </div>
+                <div class="progress-bar-bg">
+                  <div id="calorieProgressBar" class="progress-bar-fill" style="width: 0%;"></div>
+                </div>
+              </div>
+
+              <!-- Macro Stats Grid & Chart -->
+              <div class="card chart-card">
+                <h3><i class="fa-solid fa-chart-pie"></i> Daily Macro Breakdown</h3>
+                <div class="chart-layout">
+                  <div class="chart-container">
+                    <canvas id="macroChart"></canvas>
+                    <div id="macroChartEmpty" class="chart-empty">No meals logged yet</div>
+                  </div>
+                  <div class="macro-stats">
+                    <div class="macro-item protein">
+                      <span class="label">Protein</span>
+                      <span class="value" id="totalProtein">0g</span>
+                    </div>
+                    <div class="macro-item carbs">
+                      <span class="label">Carbs</span>
+                      <span class="value" id="totalCarbs">0g</span>
+                    </div>
+                    <div class="macro-item fats">
+                      <span class="label">Fats</span>
+                      <span class="value" id="totalFats">0g</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Latest Analysis Result Box -->
+              <div id="latestResultCard" class="card result-card hidden">
+                <div class="result-header">
+                  <h3 id="resultMealName">Meal Name</h3>
+                  <span id="resultScoreBadge" class="badge">Efficiency</span>
+                </div>
+
+                <!-- Multi-item Plate Breakdown -->
+                <div id="plateItemsContainer" class="plate-items-container hidden">
+                  <h4 class="plate-items-title">
+                    <i class="fa-solid fa-list-ul"></i> Detected Plate Breakdown:
+                  </h4>
+                  <ul id="plateItemsList" class="plate-items-list">
+                    <!-- Items dynamically populated by app.js -->
+                  </ul>
+                </div>
+
+                <p id="resultAdvice" class="advice-text"></p>
+              </div>
+            </section>
+
+          </main>
+
+          <!-- MEAL HISTORY: filterable, searchable, paginated -->
+          <section class="card history-section">
+            <div class="history-header">
+              <h2><i class="fa-solid fa-list-check"></i> Meal History</h2>
+              <button type="button" id="clearAllBtn" class="btn-clear">
+                <i class="fa-solid fa-trash"></i> Clear All History
+              </button>
+            </div>
+
+            <div class="history-tools">
+              <div class="history-search">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input
+                  type="search"
+                  id="historySearch"
+                  placeholder="Search meals by name..."
+                  autocomplete="off"
+                  aria-label="Search meals by name"
+                />
+              </div>
+
+              <select id="historyRange" aria-label="Filter by date range">
+                <option value="today">Today</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="week">Last 7 Days</option>
+                <option value="month">Last 30 Days</option>
+                <option value="all">All Time</option>
+                <option value="custom">Custom Range</option>
+              </select>
+
+              <div class="history-custom-range hidden" id="historyCustomRange">
+                <input type="date" id="historyStartDate" aria-label="Start date" />
+                <span class="history-range-sep">to</span>
+                <input type="date" id="historyEndDate" aria-label="End date" />
+                <button type="button" id="historyApplyRange" class="btn-apply-range">Apply</button>
+              </div>
+            </div>
+
+            <div class="history-summary" id="historySummary">
+              <span class="history-summary-item"><i class="fa-solid fa-fire"></i> <strong id="histTotalCal">0</strong> kcal</span>
+              <span class="history-summary-item"><strong id="histTotalProtein">0</strong>g protein</span>
+              <span class="history-summary-item"><strong id="histTotalCarbs">0</strong>g carbs</span>
+              <span class="history-summary-item"><strong id="histTotalFats">0</strong>g fats</span>
+              <span class="history-summary-item history-summary-count" id="historyCount">0 meals</span>
+            </div>
+
+            <div class="table-responsive">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date &amp; Time</th>
+                    <th>Type</th>
+                    <th>Meal</th>
+                    <th>Calories</th>
+                    <th>Protein</th>
+                    <th>Carbs</th>
+                    <th>Fats</th>
+                    <th>Goal Alignment</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="historyTableBody">
+                  <tr>
+                    <td colspan="9" class="text-center">Loading meal history...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="history-footer">
+              <span class="history-footer-text" id="historyRangeLabel"></span>
+              <button type="button" id="loadMoreBtn" class="btn-load-more hidden">
+                <i class="fa-solid fa-arrow-down"></i> Load more
+              </button>
+            </div>
+          </section>
+
+        </section><!-- /view-log -->
+
+        <!-- ========== VIEW: INSIGHTS & PROGRESS ========== -->
+        <section id="view-insights" class="view hidden">
+          <div class="insights-header">
+            <div class="insights-heading">
+              <h2><i class="fa-solid fa-chart-simple"></i> Insights &amp; Progress</h2>
+              <p id="insightsRangeSummary">Loading your trends...</p>
+            </div>
+            <div class="range-switch" id="insightsRangeSwitch" role="group" aria-label="Insights time range">
+              <button type="button" class="range-btn" data-days="7">7 days</button>
+              <button type="button" class="range-btn is-active" data-days="30">30 days</button>
+              <button type="button" class="range-btn" data-days="90">90 days</button>
             </div>
           </div>
-        </div>
 
-        <div class="form-group">
-          <label for="textInput"><i class="fa-solid fa-pen"></i> Description / Ingredients</label>
-          <textarea id="textInput" rows="3" placeholder="e.g., Grilled chicken breast with 1 cup brown rice and steamed broccoli"></textarea>
-        </div>
+          <div class="insight-grid">
+            <!-- 1. Weekly calorie average -->
+            <article class="insight-card">
+              <div class="insight-card-head">
+                <span class="stat-icon"><i class="fa-solid fa-fire-flame-curved"></i></span>
+                <span class="insight-label">Weekly Calorie Average</span>
+              </div>
+              <p class="insight-value"><strong id="insWeeklyAvg">—</strong><span>kcal / day</span></p>
+              <div class="insight-bar"><div class="insight-bar-fill" id="insWeeklyBar"></div></div>
+              <p class="insight-note" id="insWeeklyNote">Log meals to build this average.</p>
+              <ul class="week-strip" id="insWeekStrip"></ul>
+            </article>
 
-        <button type="submit" id="submitBtn" class="btn-primary">
-          <i class="fa-solid fa-wand-magic-sparkles"></i> Analyze & Log Meal
-        </button>
+            <!-- 2. Macro consistency score -->
+            <article class="insight-card insight-card-consistency">
+              <div class="insight-card-head">
+                <span class="stat-icon"><i class="fa-solid fa-scale-balanced"></i></span>
+                <span class="insight-label">Macro Consistency</span>
+              </div>
+              <p class="insight-value"><strong id="insConsistencyScore">—</strong><span>/ 100</span></p>
+              <p class="insight-badge" id="insConsistencyGrade">—</p>
+              <ul class="consistency-list" id="insMacroConsistency"></ul>
+            </article>
 
-      </form>
-    </section>
+            <!-- 3. Goal completion percentage -->
+            <article class="insight-card insight-card-goal">
+              <div class="insight-card-head">
+                <span class="stat-icon"><i class="fa-solid fa-bullseye"></i></span>
+                <span class="insight-label">Goal Completion</span>
+              </div>
+              <p class="insight-value"><strong id="insGoalPct">—</strong><span>% of targets hit</span></p>
+              <ul class="goal-meter-list" id="insGoalMetrics"></ul>
+              <p class="insight-note" id="insGoalNote">—</p>
+            </article>
 
-    <!-- RIGHT PANEL: Dashboard & Daily Summary -->
-    <section class="dashboard-panel" id="dashboardPanel">
-
-      <!-- Calorie Progress Banner -->
-      <div class="card summary-card">
-        <div class="summary-header">
-          <h3>Daily Calorie Budget</h3>
-          <span id="calorieCountText">0 / 2000 kcal</span>
-        </div>
-        <div class="progress-bar-bg">
-          <div id="calorieProgressBar" class="progress-bar-fill" style="width: 0%;"></div>
-        </div>
-      </div>
-
-      <!-- Macro Stats Grid & Chart -->
-      <div class="card chart-card">
-        <h3><i class="fa-solid fa-chart-pie"></i> Daily Macro Breakdown</h3>
-        <div class="chart-layout">
-          <div class="chart-container">
-            <canvas id="macroChart"></canvas>
-            <div id="macroChartEmpty" class="chart-empty">No meals logged yet</div>
+            <!-- 4. Daily + weekly streaks -->
+            <article class="insight-card insight-card-streak">
+              <div class="insight-card-head">
+                <span class="stat-icon"><i class="fa-solid fa-fire"></i></span>
+                <span class="insight-label">Streaks</span>
+              </div>
+              <div class="streak-grid">
+                <div class="streak-item">
+                  <strong id="insLogStreak">0</strong>
+                  <span>day logging streak</span>
+                </div>
+                <div class="streak-item">
+                  <strong id="insGoalStreak">0</strong>
+                  <span>day goal streak</span>
+                </div>
+                <div class="streak-item">
+                  <strong id="insWeekStreak">0</strong>
+                  <span>week goal streak</span>
+                </div>
+                <div class="streak-item">
+                  <strong id="insLongestStreak">0</strong>
+                  <span>best logging streak</span>
+                </div>
+              </div>
+              <p class="insight-note" id="insStreakNote">—</p>
+            </article>
           </div>
-          <div class="macro-stats">
-            <div class="macro-item protein">
-              <span class="label">Protein</span>
-              <span class="value" id="totalProtein">0g</span>
+
+          <!-- Meal timing analysis -->
+          <section class="card insight-panel">
+            <h3><i class="fa-regular fa-clock"></i> Meal Timing</h3>
+            <ul class="timing-list" id="insMealTiming"></ul>
+            <p class="insight-note" id="insTimingNote"></p>
+          </section>
+        </section><!-- /view-insights -->
+
+        <!-- ========== VIEW: ACCOUNTS ========== -->
+        <section id="view-accounts" class="view hidden">
+          <div class="card settings-panel">
+            <div class="settings-profile-panel">
+              <div class="settings-profile-head">
+                <h4><i class="fa-solid fa-user"></i> Your Profile</h4>
+                <button type="button" id="editProfileBtn" class="btn-secondary">
+                  <i class="fa-solid fa-pen"></i> Edit &amp; Recalculate
+                </button>
+              </div>
+              <div id="profileSummary" class="profile-summary">Loading your profile...</div>
             </div>
-            <div class="macro-item carbs">
-              <span class="label">Carbs</span>
-              <span class="value" id="totalCarbs">0g</span>
+
+            <div class="settings-divider">
+              <span><i class="fa-solid fa-bullseye"></i> Nutrition Targets</span>
             </div>
-            <div class="macro-item fats">
-              <span class="label">Fats</span>
-              <span class="value" id="totalFats">0g</span>
-            </div>
+
+            <form id="goalsForm" class="settings-form">
+              <div class="form-group">
+                <label for="targetCalories">Daily Calorie Target</label>
+                <input type="number" id="targetCalories" min="500" max="10000" step="50" value="2000">
+              </div>
+              <div class="form-group">
+                <label for="targetProtein">Daily Protein (g)</label>
+                <input type="number" id="targetProtein" min="0" max="500" step="1" value="150">
+              </div>
+              <div class="form-group">
+                <label for="targetCarbs">Daily Carbs (g)</label>
+                <input type="number" id="targetCarbs" min="0" max="500" step="1" value="250">
+              </div>
+              <div class="form-group">
+                <label for="targetFats">Daily Fats (g)</label>
+                <input type="number" id="targetFats" min="0" max="500" step="1" value="65">
+              </div>
+              <button type="submit" class="btn-primary">Save Goals</button>
+              <div id="goalsMessage" class="message"></div>
+            </form>
           </div>
+        </section><!-- /view-accounts -->
+
+        <!-- ========== VIEW: WEIGHT PROGRESS ========== -->
+        <section id="view-weight" class="view hidden">
+          <section class="card insight-panel">
+            <div class="insight-panel-head">
+              <h3><i class="fa-solid fa-weight-scale"></i> Weight Progress</h3>
+              <form class="weight-form" id="weightForm">
+                <input type="number" id="weightInput" min="25" max="400" step="0.1" placeholder="kg" aria-label="Weight in kilograms" required>
+                <button type="submit" class="btn-save-edit"><i class="fa-solid fa-plus"></i> Log</button>
+              </form>
+            </div>
+            <div class="weight-stats" id="insWeightStats"></div>
+            <div class="insights-chart-wrap">
+              <canvas id="weightChart"></canvas>
+              <div id="weightChartEmpty" class="chart-empty">No weight check-ins yet</div>
+            </div>
+            <p class="insight-note" id="insWeightNote"></p>
+            <p class="message" id="weightMessage"></p>
+            <div class="weight-targets hidden" id="insWeightTargets">
+              <span id="insWeightTargetsText"></span>
+              <button type="button" id="applySuggestedTargets" class="btn-apply-range">Apply suggested targets</button>
+            </div>
+          </section>
+        </section><!-- /view-weight -->
+
+        <!-- ========== VIEW: WEEK BY WEEK ========== -->
+        <section id="view-weekly" class="view hidden">
+          <section class="card insight-panel">
+            <h3><i class="fa-solid fa-calendar-week"></i> Week by Week</h3>
+            <div class="insights-chart-wrap">
+              <canvas id="weeklyChart"></canvas>
+              <div id="weeklyChartEmpty" class="chart-empty">Not enough data yet</div>
+            </div>
+            <p class="insight-note" id="insWeekByWeekNote"></p>
+          </section>
+        </section><!-- /view-weekly -->
+
+        <!-- ========== VIEW: MOST FREQUENTLY LOGGED MEALS ========== -->
+        <section id="view-frequent" class="view hidden">
+          <section class="card insight-panel">
+            <h3><i class="fa-solid fa-bowl-food"></i> Most Frequently Logged Meals</h3>
+            <ol class="common-meals-list" id="insCommonMeals"></ol>
+          </section>
+        </section><!-- /view-frequent -->
+
+      </div><!-- /content -->
+    </div><!-- /app-shell -->
+
+    <!-- MONTHLY CHART MODAL: opened from the sidebar footer -->
+    <div class="modal-overlay hidden" id="monthlyModalOverlay">
+      <div class="card chart-card modal-panel" id="monthlyPanel">
+        <div class="modal-header">
+          <h3><i class="fa-solid fa-chart-line"></i> 30-Day Calorie Trends</h3>
+          <button type="button" id="closeMonthlyBtn" class="btn-close">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <div class="monthly-chart-container" style="position: relative; height: 320px; width: 100%;">
+          <canvas id="monthlyChart"></canvas>
         </div>
       </div>
-
-      <!-- Latest Analysis Result Box -->
-      <div id="latestResultCard" class="card result-card hidden">
-        <div class="result-header">
-          <h3 id="resultMealName">Meal Name</h3>
-          <span id="resultScoreBadge" class="badge">Efficiency</span>
-        </div>
-
-        <!-- Multi-item Plate Breakdown -->
-        <div id="plateItemsContainer" class="plate-items-container hidden">
-          <h4 class="plate-items-title">
-            <i class="fa-solid fa-list-ul"></i> Detected Plate Breakdown:
-          </h4>
-          <ul id="plateItemsList" class="plate-items-list">
-            <!-- Items dynamically populated by app.js -->
-          </ul>
-        </div>
-
-        <p id="resultAdvice" class="advice-text"></p>
-      </div>
-    </section>
-
-  </main>
-
-  <!-- MONTHLY CHART MODAL: opened via the header button -->
-  <div class="modal-overlay hidden" id="monthlyModalOverlay">
-    <div class="card chart-card modal-panel" id="monthlyPanel">
-      <div class="modal-header">
-        <h3><i class="fa-solid fa-chart-line"></i> 30-Day Calorie Trends</h3>
-        <button type="button" id="closeMonthlyBtn" class="btn-close">
-          <i class="fa-solid fa-xmark"></i>
-        </button>
-      </div>
-      <div class="monthly-chart-container" style="position: relative; height: 320px; width: 100%;">
-        <canvas id="monthlyChart"></canvas>
-      </div>
     </div>
-  </div>
-
-  <!-- MEAL HISTORY: filterable, searchable, paginated -->
-  <section class="card history-section">
-    <div class="history-header">
-      <h2><i class="fa-solid fa-list-check"></i> Meal History</h2>
-      <button type="button" id="clearAllBtn" class="btn-clear">
-        <i class="fa-solid fa-trash"></i> Clear All History
-      </button>
-    </div>
-
-    <div class="history-tools">
-      <div class="history-search">
-        <i class="fa-solid fa-magnifying-glass"></i>
-        <input
-          type="search"
-          id="historySearch"
-          placeholder="Search meals by name..."
-          autocomplete="off"
-          aria-label="Search meals by name"
-        />
-      </div>
-
-      <select id="historyRange" aria-label="Filter by date range">
-        <option value="today">Today</option>
-        <option value="yesterday">Yesterday</option>
-        <option value="week">Last 7 Days</option>
-        <option value="month">Last 30 Days</option>
-        <option value="all">All Time</option>
-        <option value="custom">Custom Range</option>
-      </select>
-
-      <div class="history-custom-range hidden" id="historyCustomRange">
-        <input type="date" id="historyStartDate" aria-label="Start date" />
-        <span class="history-range-sep">to</span>
-        <input type="date" id="historyEndDate" aria-label="End date" />
-        <button type="button" id="historyApplyRange" class="btn-apply-range">Apply</button>
-      </div>
-    </div>
-
-    <div class="history-summary" id="historySummary">
-      <span class="history-summary-item"><i class="fa-solid fa-fire"></i> <strong id="histTotalCal">0</strong> kcal</span>
-      <span class="history-summary-item"><strong id="histTotalProtein">0</strong>g protein</span>
-      <span class="history-summary-item"><strong id="histTotalCarbs">0</strong>g carbs</span>
-      <span class="history-summary-item"><strong id="histTotalFats">0</strong>g fats</span>
-      <span class="history-summary-item history-summary-count" id="historyCount">0 meals</span>
-    </div>
-
-    <div class="table-responsive">
-      <table>
-        <thead>
-          <tr>
-            <th>Date &amp; Time</th>
-            <th>Type</th>
-            <th>Meal</th>
-            <th>Calories</th>
-            <th>Protein</th>
-            <th>Carbs</th>
-            <th>Fats</th>
-            <th>Goal Alignment</th>
-            <th>Action</th>
-          </tr>
-        </thead>
-        <tbody id="historyTableBody">
-          <tr>
-            <td colspan="9" class="text-center">Loading meal history...</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="history-footer">
-      <span class="history-footer-text" id="historyRangeLabel"></span>
-      <button type="button" id="loadMoreBtn" class="btn-load-more hidden">
-        <i class="fa-solid fa-arrow-down"></i> Load more
-      </button>
-    </div>
-  </section>
 
   </div><!-- End of appScreen -->
 
@@ -647,6 +813,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=20260927"></script>
+  <script src="app.js?v=20261009-2"></script>
 </body>
 </html>

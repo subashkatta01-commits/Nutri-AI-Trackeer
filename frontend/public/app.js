@@ -4,9 +4,13 @@
  */
 
 let chartInstance = null;
+let monthlyChartInstance = null;
 let currentBase64Image = null;
 let currentUser = null;
 let authToken = null;
+let authListenersInitialized = false;
+let appListenersInitialized = false;
+let loginInProgress = false;
 
 let currentGoals = { calories: 2000, protein: 150, carbs: 250, fats: 65 };
 let lastTotals = { totalCalories: 0, totalProtein: 0, totalCarbs: 0, totalFats: 0 };
@@ -48,7 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ========== AUTHENTICATION ==========
 
-function checkAuthentication() {
+async function checkAuthentication() {
   const token = localStorage.getItem('authToken');
   const user = localStorage.getItem('currentUser');
   
@@ -66,8 +70,8 @@ function checkAuthentication() {
     loadDailyData();
     loadNutritionGoals();
     setupAutoMealType();
-    loadProfile();
-    if (!(currentUser.onboarding_completed || 0)) {
+    const profile = await loadProfile();
+    if (profile === null && !(currentUser.onboarding_completed || 0)) {
       openOnboarding(false);
     }
   } else {
@@ -104,6 +108,8 @@ function showApp() {
 }
 
 function setupAuthListeners() {
+  if (authListenersInitialized) return;
+
   const loginForm = document.getElementById('loginForm');
   const signupForm = document.getElementById('signupForm');
   const toggleToSignup = document.getElementById('toggleToSignup');
@@ -121,25 +127,37 @@ function setupAuthListeners() {
     signupForm.classList.add('hidden');
     loginForm.classList.remove('hidden');
   });
+  authListenersInitialized = true;
 }
 
 async function handleLogin(e) {
   e.preventDefault();
-  const email = document.getElementById('loginEmail').value;
-  const password = document.getElementById('loginPassword').value;
+  if (loginInProgress) return;
+
+  loginInProgress = true;
+  const submitButton = document.querySelector('#loginForm button[type="submit"]');
+  const submitLabel = submitButton?.textContent;
   const errorDiv = document.getElementById('loginError');
+  errorDiv.textContent = '';
+  if (submitButton) submitButton.disabled = true;
+  if (submitButton) submitButton.textContent = 'Signing in...';
+
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
 
   try {
     const response = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ username, password })
     });
 
     const data = await response.json();
 
     if (!response.ok) {
-      errorDiv.textContent = data.error || 'Login failed';
+      errorDiv.textContent = response.status === 401
+        ? "No account matched those sign-in details, or the password was incorrect. Try again or sign up."
+        : data.error || 'Unable to sign in. Please try again.';
       return;
     }
 
@@ -155,13 +173,17 @@ async function handleLogin(e) {
     loadDailyData();
     loadNutritionGoals();
     setupAutoMealType();
-    loadProfile();
-    if (!(currentUser.onboarding_completed || 0)) {
+    const profile = await loadProfile();
+    if (profile === null && !(currentUser.onboarding_completed || 0)) {
       openOnboarding(false);
     }
     errorDiv.textContent = '';
   } catch (error) {
     errorDiv.textContent = 'Network error: ' + error.message;
+  } finally {
+    loginInProgress = false;
+    if (submitButton) submitButton.disabled = false;
+    if (submitButton && submitLabel !== undefined) submitButton.textContent = submitLabel;
   }
 }
 
@@ -198,7 +220,7 @@ async function handleSignup(e) {
     loadDailyData();
     loadNutritionGoals();
     setupAutoMealType();
-    loadProfile();
+    await loadProfile();
     openOnboarding(false);
     errorDiv.textContent = '';
   } catch (error) {
@@ -413,6 +435,7 @@ async function submitOnboarding() {
     }
 
     currentProfile = result.profile;
+    applyGoalToMealForm(currentProfile.goal);
     currentGoals = {
       calories: result.goals.daily_calorie_target,
       protein: result.goals.daily_protein_target,
@@ -470,6 +493,7 @@ function applyGoalToMealForm(goal) {
   const select = document.getElementById('fitnessCategory');
   if (select && category && Array.from(select.options).some(o => o.value === category)) {
     select.value = category;
+    select.disabled = true;
   }
 }
 
@@ -479,23 +503,34 @@ async function loadProfile() {
       headers: { 'Authorization': `Bearer ${authToken}` }
     });
 
-    if (handleUnauthorized(response)) return;
+    if (handleUnauthorized(response)) return undefined;
+
+    if (response.status === 404) {
+      currentProfile = null;
+      renderProfileSummary(null);
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Profile request failed with status ${response.status}`);
+    }
 
     const data = await response.json();
-    if (response.ok) {
-      currentProfile = data.profile;
-      renderProfileSummary(currentProfile);
-
-      // Prefill the wizard if it's currently visible (initial or edit mode)
-      const onboardingScreen = document.getElementById('onboardingScreen');
-      if (onboardingScreen && !onboardingScreen.classList.contains('hidden')) {
-        refillOnboarding(currentProfile);
-      }
-    } else {
-      renderProfileSummary(null);
+    currentProfile = data.profile;
+    renderProfileSummary(currentProfile);
+    if (currentProfile && currentProfile.goal) {
+      applyGoalToMealForm(currentProfile.goal);
     }
+
+    // Prefill the wizard if it's currently visible (initial or edit mode)
+    const onboardingScreen = document.getElementById('onboardingScreen');
+    if (onboardingScreen && !onboardingScreen.classList.contains('hidden')) {
+      refillOnboarding(currentProfile);
+    }
+    return currentProfile;
   } catch (error) {
     console.error('Failed to load profile:', error);
+    return undefined;
   }
 }
 
@@ -575,12 +610,12 @@ async function loadNutritionGoals() {
 }
 
 function openSettingsModal() {
-  document.getElementById('settingsModalOverlay').classList.remove('hidden');
+  switchView('accounts');
   renderProfileSummary(currentProfile);
 }
 
 function closeSettingsModal() {
-  document.getElementById('settingsModalOverlay').classList.add('hidden');
+  if (currentView === 'accounts') switchView('log');
 }
 
 async function handleSaveGoals(e) {
@@ -643,9 +678,37 @@ function setupAutoMealType() {
   else mealSelect.value = 'Snack';
 }
 
+// ========== VIEWS / SIDEBAR NAVIGATION ==========
+
+let currentView = 'log';
+
+function switchView(name) {
+  const view = document.getElementById('view-' + name);
+  if (!view) return;
+  currentView = name;
+
+  document.querySelectorAll('.view').forEach((v) => v.classList.add('hidden'));
+  view.classList.remove('hidden');
+
+  document.querySelectorAll('.nav-item[data-view]').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.view === name);
+  });
+
+  // Charts rendered while their view was display:none have no size yet.
+  requestAnimationFrame(() => {
+    const charts = [];
+    if (name === 'log' && chartInstance) charts.push(chartInstance);
+    if (name === 'weight' && weightChartInstance) charts.push(weightChartInstance);
+    if (name === 'weekly' && weeklyChartInstance) charts.push(weeklyChartInstance);
+    charts.forEach((c) => { try { c.resize(); } catch (e) { /* ignore */ } });
+  });
+}
+
 // ========== EVENT LISTENERS ==========
 
 function setupEventListeners() {
+  if (appListenersInitialized) return;
+
   const imageInput = document.getElementById('imageInput');
   const removeImgBtn = document.getElementById('removeImgBtn');
   const mealForm = document.getElementById('mealForm');
@@ -667,6 +730,11 @@ function setupEventListeners() {
   if (logoutBtn) logoutBtn.addEventListener('click', handleLogout);
   if (settingsBtn) settingsBtn.addEventListener('click', openSettingsModal);
   if (goalsForm) goalsForm.addEventListener('submit', handleSaveGoals);
+
+  // Sidebar navigation
+  document.querySelectorAll('.nav-item[data-view]').forEach((btn) => {
+    btn.addEventListener('click', () => switchView(btn.dataset.view));
+  });
 
   // Monthly chart modal
   const monthlyChartBtn = document.getElementById('monthlyChartBtn');
@@ -694,6 +762,7 @@ function setupEventListeners() {
 
   // Onboarding
   setupOnboarding();
+  setupInsightsControls();
 
   const editProfileBtn = document.getElementById('editProfileBtn');
   if (editProfileBtn) {
@@ -713,6 +782,7 @@ function setupEventListeners() {
   });
 
   setupHistoryControls();
+  appListenersInitialized = true;
 }
 
 // ========== MEAL HISTORY ==========
@@ -1507,6 +1577,7 @@ async function loadDailyData() {
     const data = await response.json();
     updateDailyDisplay(data.totals, data.logs);
     loadHistory({ reset: true });
+    loadInsights();
   } catch (error) {
     console.error('Failed to load daily data:', error);
   }
@@ -1730,12 +1801,12 @@ function displayMonthlyChart(data) {
   const ctx = document.getElementById('monthlyChart')?.getContext('2d');
   if (!ctx) return;
 
-  if (chartInstance) chartInstance.destroy();
+  if (monthlyChartInstance) monthlyChartInstance.destroy();
 
   const labels = data.map(d => new Date(d.log_date).toLocaleDateString());
   const calories = data.map(d => d.totalCalories);
 
-  chartInstance = new Chart(ctx, {
+  monthlyChartInstance = new Chart(ctx, {
     type: 'line',
     data: {
       labels,
@@ -1762,6 +1833,623 @@ function displayMonthlyChart(data) {
       }
     }
   });
+}
+
+// ========== INSIGHTS & PROGRESS ==========
+
+const insightsState = { days: 30, data: null, loading: false, pending: false };
+
+let weightChartInstance = null;
+let weeklyChartInstance = null;
+
+const CHART_TEXT_COLOR = '#eef1f8';
+const CHART_GRID_COLOR = 'rgba(255, 255, 255, 0.08)';
+
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+function parseLocalDate(dateString) {
+  return new Date(`${dateString}T00:00:00`);
+}
+
+function formatShortDate(dateString) {
+  const date = parseLocalDate(dateString);
+  if (isNaN(date.getTime())) return dateString;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function formatSigned(value, suffix = '') {
+  if (value === null || value === undefined) return '—';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${value}${suffix}`;
+}
+
+const toLocalDateString = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+function setupInsightsControls() {
+  const rangeSwitch = document.getElementById('insightsRangeSwitch');
+  const weightForm = document.getElementById('weightForm');
+  const applyTargetsBtn = document.getElementById('applySuggestedTargets');
+  const insightsBtn = document.getElementById('insightsBtn');
+
+  if (rangeSwitch) {
+    rangeSwitch.addEventListener('click', (e) => {
+      const btn = e.target.closest('.range-btn');
+      if (!btn || btn.classList.contains('is-active')) return;
+
+      rangeSwitch.querySelectorAll('.range-btn').forEach((b) => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      insightsState.days = parseInt(btn.dataset.days, 10) || 30;
+      loadInsights();
+    });
+  }
+
+  if (weightForm) weightForm.addEventListener('submit', handleWeightSubmit);
+  if (applyTargetsBtn) applyTargetsBtn.addEventListener('click', applySuggestedTargets);
+
+  if (insightsBtn) {
+    insightsBtn.addEventListener('click', () => {
+      document.getElementById('insightsSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+}
+
+async function loadInsights() {
+  // A refresh requested mid-flight (a meal was just logged) must not be dropped,
+  // or the screen keeps showing numbers from before it.
+  if (insightsState.loading) {
+    insightsState.pending = true;
+    return;
+  }
+  insightsState.loading = true;
+
+  try {
+    const response = await fetch(`/api/insights?days=${insightsState.days}`, {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+
+    if (handleUnauthorized(response)) return;
+
+    if (!response.ok) {
+      setText('insightsRangeSummary', 'Could not load insights. Please try again.');
+      return;
+    }
+
+    const data = await response.json();
+    insightsState.data = data.insights;
+    renderInsights(data.insights);
+  } catch (error) {
+    console.error('Failed to load insights:', error);
+    setText('insightsRangeSummary', 'Could not reach the server.');
+  } finally {
+    insightsState.loading = false;
+
+    if (insightsState.pending) {
+      insightsState.pending = false;
+      loadInsights();
+    }
+  }
+}
+
+function renderInsights(insights) {
+  const { range } = insights;
+
+  setText(
+    'insightsRangeSummary',
+    `${range.loggedDays} of ${range.days} days logged · ${range.mealsAnalysed} meals analysed`
+  );
+
+  renderWeeklyCalories(insights.weeklyCalories);
+  renderMacroConsistency(insights.macroConsistency);
+  renderGoalCompletion(insights.goalCompletion);
+  renderStreaks(insights.streaks);
+  renderMostCommonMeals(insights.mostCommonMeals);
+  renderMealTiming(insights.mealTiming);
+  renderWeightProgress(insights.weight);
+  renderWeeklyChart(insights.streaks.weeks);
+}
+
+// ---------- Weekly calorie average ----------
+
+function renderWeeklyCalories(weekly) {
+  setText('insWeeklyAvg', weekly.loggedDays > 0 ? weekly.averageCalories.toLocaleString() : '—');
+
+  const bar = document.getElementById('insWeeklyBar');
+  if (bar) {
+    const pct = weekly.target > 0 ? (weekly.averageCalories / weekly.target) * 100 : 0;
+    bar.style.width = Math.min(pct, 100) + '%';
+    bar.classList.toggle('over', weekly.status === 'over');
+    bar.classList.toggle('under', weekly.status === 'under');
+  }
+
+  const note = document.getElementById('insWeeklyNote');
+  if (note) {
+    if (weekly.loggedDays === 0) {
+      note.textContent = 'No meals logged in the last 7 days yet.';
+    } else {
+      // Inside the +/-10% band the average is still "under" or "over", so the
+      // sign of the delta is what the sentence has to follow.
+      const direction = weekly.deltaCalories > 0 ? 'over' : 'under';
+      const delta = `${Math.abs(weekly.deltaCalories).toLocaleString()} kcal/day ${direction}`;
+      note.innerHTML = `<strong>${weekly.onTargetDays}/${weekly.loggedDays}</strong> days on target · ${escapeHtml(delta)} your goal`;
+    }
+  }
+
+  const strip = document.getElementById('insWeekStrip');
+  if (!strip) return;
+
+  const today = toLocalDateString(new Date());
+
+  strip.innerHTML = weekly.days.map((day) => {
+    const classes = ['has-data', day.onTarget ? 'on-target' : '', day.date === today ? 'today' : '']
+      .filter(Boolean)
+      .join(' ');
+
+    const title = `${formatShortDate(day.date)} · ${day.mealCount > 0
+      ? day.calories.toLocaleString() + ' kcal'
+      : 'no meals logged'}`;
+
+    return `<li class="${classes}" title="${escapeAttr(title)}">
+      ${escapeHtml(parseLocalDate(day.date).toLocaleDateString(undefined, { weekday: 'narrow' }))}
+      <i></i>
+    </li>`;
+  }).join('');
+}
+
+// ---------- Macro consistency ----------
+
+function renderMacroConsistency(consistency) {
+  setText('insConsistencyScore', consistency.daysAnalysed > 0 ? consistency.score : '—');
+  setText('insConsistencyGrade', consistency.grade);
+
+  const list = document.getElementById('insMacroConsistency');
+  if (!list) return;
+
+  if (consistency.daysAnalysed === 0) {
+    list.innerHTML = '<li class="insight-note">Log a few days of meals to score your consistency.</li>';
+    return;
+  }
+
+  list.innerHTML = consistency.macros.map((macro) => `
+    <li class="consistency-row">
+      <div class="row-top">
+        <span class="row-label">${escapeHtml(macro.label)}</span>
+        <span class="row-value">${macro.average}g / ${macro.target}g · score ${macro.score}</span>
+      </div>
+      <div class="insight-bar">
+        <div class="insight-bar-fill ${escapeAttr(macro.key)}" style="width: ${macro.score}%"></div>
+      </div>
+    </li>
+  `).join('');
+}
+
+// ---------- Goal completion ----------
+
+function renderGoalCompletion(completion) {
+  setText('insGoalPct', completion.loggedDays > 0 ? completion.percentage : '—');
+
+  const list = document.getElementById('insGoalMetrics');
+  if (list) {
+    if (completion.loggedDays === 0) {
+      list.innerHTML = '<li class="insight-note">No meals logged in this range yet.</li>';
+    } else {
+      list.innerHTML = completion.perMetric.map((metric) => `
+        <li class="goal-meter-row">
+          <div class="row-top">
+            <span class="row-label">${escapeHtml(metric.label)}</span>
+            <span class="row-value">${metric.percentage}%</span>
+          </div>
+          <div class="insight-bar">
+            <div class="insight-bar-fill ${escapeAttr(metric.key)}" style="width: ${metric.percentage}%"></div>
+          </div>
+        </li>
+      `).join('');
+    }
+  }
+
+  const note = document.getElementById('insGoalNote');
+  if (note) {
+    note.innerHTML = completion.loggedDays === 0
+      ? 'Log meals to track how close you land to your targets.'
+      : `<strong>${completion.onTargetDays}/${completion.loggedDays}</strong> days within 10% of your calorie goal · protein target hit on <strong>${completion.proteinTargetDays}</strong>`;
+  }
+}
+
+// ---------- Streaks ----------
+
+function renderStreaks(streaks) {
+  setText('insLogStreak', streaks.currentLogStreak);
+  setText('insGoalStreak', streaks.currentGoalStreak);
+  setText('insWeekStreak', streaks.weekStreak);
+  setText('insLongestStreak', streaks.longestLogStreak);
+
+  const note = document.getElementById('insStreakNote');
+  if (!note) return;
+
+  const weeks = streaks.weeks.length;
+  note.innerHTML = `Best goal streak: <strong>${streaks.longestGoalStreak}</strong> days · <strong>${streaks.weeksOnTarget}</strong> of ${weeks} week${weeks === 1 ? '' : 's'} hit a goal day`;
+}
+
+// ---------- Most common meals ----------
+
+function renderMostCommonMeals(meals) {
+  const list = document.getElementById('insCommonMeals');
+  if (!list) return;
+
+  if (meals.items.length === 0) {
+    list.innerHTML = '<li class="insight-note">No meals logged in this range yet.</li>';
+    return;
+  }
+
+  list.innerHTML = meals.items.map((meal) => `
+    <li class="common-meal">
+      <span class="common-meal-body">
+        <span class="common-meal-name" title="${escapeAttr(meal.name)}">${escapeHtml(meal.name)}</span>
+        <span class="common-meal-meta">
+          ${escapeHtml(meal.topType || 'Meal')} · ${meal.averageCalories} kcal avg · last ${escapeHtml(formatShortDate(meal.lastLogged))}
+        </span>
+      </span>
+      <span class="common-meal-count">${meal.times}&times;</span>
+    </li>
+  `).join('');
+}
+
+// ---------- Meal timing ----------
+
+function renderMealTiming(timing) {
+  const list = document.getElementById('insMealTiming');
+  if (list) {
+    if (timing.byType.length === 0) {
+      list.innerHTML = '<li class="insight-note">No meals logged in this range yet.</li>';
+    } else {
+      list.innerHTML = timing.byType.map((entry) => `
+        <li class="timing-row ${escapeAttr(entry.type.toLowerCase())}">
+          <span class="timing-type">${escapeHtml(entry.type)}</span>
+          <span class="timing-time">${escapeHtml(entry.averageTime)}</span>
+          <span class="timing-detail">&plusmn;${entry.spreadMinutes} min · ${entry.count} logged</span>
+        </li>
+      `).join('');
+    }
+  }
+
+  const note = document.getElementById('insTimingNote');
+  if (!note || timing.mealsAnalysed === 0) {
+    if (note) note.textContent = 'Log meals to see your eating rhythm.';
+    return;
+  }
+
+  const parts = [
+    `<strong>${timing.mealsPerDay}</strong> meals/day`,
+    `first <strong>${escapeHtml(timing.averageFirstMeal)}</strong>, last <strong>${escapeHtml(timing.averageLastMeal)}</strong>`
+  ];
+
+  if (timing.eatingWindowHours !== null) {
+    parts.push(`eating window <strong>${timing.eatingWindowHours}h</strong>`);
+  }
+  if (timing.lateNight.meals > 0) {
+    parts.push(`<strong>${timing.lateNight.mealsPct}%</strong> logged after 21:00`);
+  }
+
+  note.innerHTML = parts.join(' · ');
+}
+
+// ---------- Weight progress ----------
+
+function weightStat(label, value, tone = '') {
+  return `<span class="weight-stat">
+    <span>${escapeHtml(label)}</span>
+    <strong${tone ? ` class="${tone}"` : ''}>${escapeHtml(value)}</strong>
+  </span>`;
+}
+
+function renderWeightProgress(weight) {
+  const stats = document.getElementById('insWeightStats');
+  const note = document.getElementById('insWeightNote');
+  const targetsBox = document.getElementById('insWeightTargets');
+  const targetsText = document.getElementById('insWeightTargetsText');
+
+  if (!weight.hasEntries) {
+    if (stats) {
+      stats.innerHTML = `<span class="insight-note">No weight check-ins yet — log your first one to start the trend.</span>`;
+    }
+    if (note) note.textContent = '';
+    if (targetsBox) targetsBox.classList.add('hidden');
+
+    // Returning users already have a weight on their profile, so start the
+    // first check-in from that number instead of an empty box.
+    const weightInput = document.getElementById('weightInput');
+    if (weightInput && !weightInput.value && weight.profileWeight) {
+      weightInput.value = weight.profileWeight;
+    }
+
+    renderWeightChart([]);
+    return;
+  }
+
+  if (stats) {
+    const trendLabel = { down: 'Trending down', up: 'Trending up', steady: 'Holding steady' }[weight.trend];
+
+    stats.innerHTML = [
+      weightStat('Current', `${weight.latestWeight} kg`),
+      weightStat('Total change', formatSigned(weight.changeKg, ' kg'), weight.trend),
+      weightStat('Per week', weight.weeklyRate === null ? '—' : formatSigned(weight.weeklyRate, ' kg')),
+      weightStat('Range', `${weight.lowestWeight} – ${weight.highestWeight} kg`),
+      weightStat('BMI', weight.bmi === null ? '—' : `${weight.bmi} · ${weight.bmiCategory}`)
+    ].join('');
+  }
+
+  if (note) {
+    const goalSuffix = weight.onTrack === null
+      ? ''
+      : weight.onTrack ? ' — moving the right way for your goal.' : ' — not moving the way your goal wants yet.';
+    note.textContent = `${trendLabel} since ${formatShortDate(weight.firstDate)} over ${weight.entries} check-in${weight.entries === 1 ? '' : 's'}.${goalSuffix}`;
+  }
+
+  // Offer the last known number so a daily check-in is a one-field edit.
+  const weightInput = document.getElementById('weightInput');
+  if (weightInput && !weightInput.value) weightInput.value = weight.latestWeight;
+
+  if (targetsBox && targetsText) {
+    const suggested = weight.targetsOutdated ? weight.suggestedTargets : null;
+
+    if (suggested) {
+      targetsText.textContent = `Targets still reflect your onboarding weight. Recalculated for ${weight.latestWeight} kg: ${suggested.dailyCalorieTarget} kcal, ${suggested.dailyProteinTarget}g protein.`;
+      targetsBox.classList.remove('hidden');
+    } else {
+      targetsBox.classList.add('hidden');
+    }
+  }
+
+  renderWeightChart(weight.points);
+}
+
+function renderWeightChart(points) {
+  const ctx = document.getElementById('weightChart')?.getContext('2d');
+  if (!ctx) return;
+
+  if (weightChartInstance) {
+    weightChartInstance.destroy();
+    weightChartInstance = null;
+  }
+
+  const emptyEl = document.getElementById('weightChartEmpty');
+  if (emptyEl) emptyEl.classList.toggle('hidden', points.length > 0);
+
+  if (points.length === 0) return;
+
+  const labels = points.map((point) => formatShortDate(point.date));
+
+  weightChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Weight (kg)',
+          data: points.map((point) => point.weight),
+          borderColor: '#4fd1e6',
+          backgroundColor: 'rgba(79, 209, 230, 0.12)',
+          fill: true,
+          tension: 0.35,
+          pointRadius: points.length > 30 ? 0 : 3,
+          pointBackgroundColor: '#4fd1e6'
+        },
+        {
+          label: '7-day average',
+          data: points.map((point) => point.average),
+          borderColor: '#ffc65c',
+          borderDash: [4, 4],
+          fill: false,
+          tension: 0.35,
+          pointRadius: 0
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: CHART_TEXT_COLOR, font: { size: 11 } } }
+      },
+      scales: {
+        y: {
+          ticks: { color: CHART_TEXT_COLOR },
+          grid: { color: CHART_GRID_COLOR }
+        },
+        x: {
+          ticks: { color: CHART_TEXT_COLOR, maxTicksLimit: 8 },
+          grid: { color: CHART_GRID_COLOR }
+        }
+      }
+    }
+  });
+}
+
+// ---------- Week by week ----------
+
+function renderWeeklyChart(weeks) {
+  const ctx = document.getElementById('weeklyChart')?.getContext('2d');
+  if (!ctx) return;
+
+  if (weeklyChartInstance) {
+    weeklyChartInstance.destroy();
+    weeklyChartInstance = null;
+  }
+
+  const emptyEl = document.getElementById('weeklyChartEmpty');
+  const hasData = weeks.some((week) => week.loggedDays > 0);
+  if (emptyEl) emptyEl.classList.toggle('hidden', hasData);
+  if (!hasData) return;
+
+  const labels = weeks.map((week) => `w/c ${formatShortDate(week.weekStart)}`);
+
+  weeklyChartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          type: 'bar',
+          label: 'Avg kcal/day',
+          data: weeks.map((week) => week.averageCalories),
+          backgroundColor: 'rgba(255, 138, 92, 0.55)',
+          borderRadius: 6,
+          yAxisID: 'y'
+        },
+        {
+          type: 'line',
+          label: 'On-target days',
+          data: weeks.map((week) => week.onTargetDays),
+          borderColor: '#34d399',
+          backgroundColor: '#34d399',
+          tension: 0.3,
+          pointRadius: 3,
+          yAxisID: 'y1'
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: CHART_TEXT_COLOR, font: { size: 11 } } }
+      },
+      scales: {
+        y: {
+          position: 'left',
+          ticks: { color: CHART_TEXT_COLOR },
+          grid: { color: CHART_GRID_COLOR }
+        },
+        y1: {
+          position: 'right',
+          min: 0,
+          max: 7,
+          ticks: { color: CHART_TEXT_COLOR, stepSize: 1, precision: 0 },
+          grid: { drawOnChartArea: false }
+        },
+        x: {
+          ticks: { color: CHART_TEXT_COLOR, maxTicksLimit: 8 },
+          grid: { color: CHART_GRID_COLOR }
+        }
+      }
+    }
+  });
+
+  const note = document.getElementById('insWeekByWeekNote');
+  if (note) {
+    const scored = weeks.filter((week) => week.loggedDays > 0);
+    const best = scored.reduce((top, week) => (week.averageCalories > top.averageCalories ? week : top), scored[0]);
+    const bestWeek = scored.length > 1
+      ? ` Best week: w/c ${formatShortDate(best.weekStart)} at ${Math.round(best.averageCalories).toLocaleString()} kcal/day.`
+      : '';
+    note.textContent = `Each bar is that week's average per logged day; the line counts days on target.${bestWeek}`;
+  }
+}
+
+// ---------- Weight logging ----------
+
+function setWeightMessage(text, type) {
+  const message = document.getElementById('weightMessage');
+  if (!message) return;
+  message.textContent = text;
+  message.className = type ? `message ${type}` : 'message';
+}
+
+async function handleWeightSubmit(e) {
+  e.preventDefault();
+
+  const input = document.getElementById('weightInput');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  const weightKg = parseFloat(input.value);
+
+  if (Number.isNaN(weightKg) || weightKg < 25 || weightKg > 400) {
+    setWeightMessage('Enter a weight between 25 and 400 kg.', 'error');
+    return;
+  }
+
+  if (submitBtn) submitBtn.disabled = true;
+
+  try {
+    const response = await fetch('/api/weight', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify({ weightKg })
+    });
+
+    const data = await response.json();
+
+    if (handleUnauthorized(response)) return;
+
+    if (!response.ok) {
+      setWeightMessage(data.error || 'Failed to log your weight.', 'error');
+      return;
+    }
+
+    setWeightMessage(`Logged ${data.log.weightKg} kg for today.`, 'success');
+    input.value = '';
+    await loadInsights();
+  } catch (error) {
+    setWeightMessage('Error: ' + error.message, 'error');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+/**
+ * Apply the targets the insights payload recalculated from the latest weight.
+ * Deliberately confirmed by the user - targets are personal, so they are never
+ * overwritten silently.
+ */
+async function applySuggestedTargets() {
+  const suggested = insightsState.data?.weight?.suggestedTargets;
+  if (!suggested) return;
+
+  const confirmed = confirm(
+    `Update your daily targets to ${suggested.dailyCalorieTarget} kcal, ${suggested.dailyProteinTarget}g protein, ` +
+    `${suggested.dailyCarbsTarget}g carbs and ${suggested.dailyFatsTarget}g fats?`
+  );
+  if (!confirmed) return;
+
+  try {
+    const response = await fetch('/api/goals', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify({
+        dailyCalorieTarget: suggested.dailyCalorieTarget,
+        dailyProteinTarget: suggested.dailyProteinTarget,
+        dailyCarbsTarget: suggested.dailyCarbsTarget,
+        dailyFatsTarget: suggested.dailyFatsTarget
+      })
+    });
+
+    const data = await response.json();
+
+    if (handleUnauthorized(response)) return;
+
+    if (!response.ok) {
+      alert(data.error || 'Failed to update targets.');
+      return;
+    }
+
+    await loadNutritionGoals();
+    await loadDailyData();
+    setWeightMessage('Targets updated from your latest weight.', 'success');
+  } catch (error) {
+    alert('Error: ' + error.message);
+  }
 }
 
 // ========== INLINE HANDLER EXPORTS ==========

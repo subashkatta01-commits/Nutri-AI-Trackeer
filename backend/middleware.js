@@ -4,6 +4,8 @@
 
 import { getUserById } from './db.js';
 
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
 export function validateMealInput(req, res, next) {
   const { mealType, category, textInput, imageBase64 } = req.body;
 
@@ -173,6 +175,177 @@ export function validateMealEdit(req, res, next) {
   next();
 }
 
+/**
+ * Validate a water check-in (POST /api/water).
+ *
+ * Accepts either a full `intakeMl` (set-the-day-total form) or a `deltaMl`
+ * increment (quick "+250ml" tap form). `date` is optional - the endpoint
+ * defaults to today - but when supplied it must be a real YYYY-MM-DD date so
+ * the one-entry-per-day index holds.
+ */
+export function validateWaterInput(req, res, next) {
+  const { intakeMl, deltaMl, goalMl, date } = req.body;
+
+  const hasIntake = intakeMl !== undefined && intakeMl !== null && intakeMl !== '';
+  const hasDelta = deltaMl !== undefined && deltaMl !== null && deltaMl !== '';
+
+  if (!hasIntake && !hasDelta) {
+    return res.status(400).json({
+      success: false,
+      error: 'Provide intakeMl (day total) or deltaMl (amount to add).'
+    });
+  }
+
+  const clampIntake = (value, min, max, label) => {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num < min || num > max) {
+      return res.status(400).json({
+        success: false,
+        error: `${label} must be a number between ${min} and ${max}.`
+      });
+    }
+    return Math.round(num);
+  };
+
+  if (hasIntake && hasDelta) {
+    return res.status(400).json({
+      success: false,
+      error: 'Provide either intakeMl or deltaMl, not both.'
+    });
+  }
+
+  const normalized = {};
+
+  if (hasIntake) {
+    // 0 is a legitimate total (a "reset my day" tap), so only reject negatives.
+    normalized.intakeMl = clampIntake(intakeMl, 0, 20000, 'intakeMl');
+  }
+
+  if (hasDelta) {
+    // Deltas are strictly positive: removing water is done with intakeMl=0,
+    // and a negative tap is far more likely a mis-parse than an intent.
+    normalized.deltaMl = clampIntake(deltaMl, 1, 5000, 'deltaMl');
+  }
+
+  if (goalMl !== undefined && goalMl !== null && goalMl !== '') {
+    normalized.goalMl = clampIntake(goalMl, 500, 10000, 'goalMl');
+  }
+
+  if (date !== undefined && date !== null && date !== '' && !DATE_ONLY_PATTERN.test(String(date))) {
+    return res.status(400).json({
+      success: false,
+      error: 'Date must be in YYYY-MM-DD format.'
+    });
+  }
+
+  normalized.date = date ? String(date) : null;
+
+  req.waterInput = normalized;
+  next();
+}
+
+/**
+ * Validate a progress photo upload (POST /api/progress-photos).
+ *
+ * The photo is compressed in the browser before upload, so the ceiling here is
+ * deliberately generous but still bounded - the blob is stored inline in SQLite
+ * and an unbounded payload would grow the database file without limit.
+ */
+export function validateProgressPhotoInput(req, res, next) {
+  const { imageBase64, note, weightKg, date } = req.body;
+
+  if (!imageBase64 || typeof imageBase64 !== 'string') {
+    return res.status(400).json({
+      success: false,
+      error: 'An image is required.'
+    });
+  }
+
+  // Require a recognisable data URL so a raw/broken string cannot be stored.
+  if (!/^data:image\/(jpeg|jpg|png|webp|gif);base64,/.test(imageBase64)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Image must be a base64 data URL (jpeg, png, webp or gif).'
+    });
+  }
+
+  // 6MB of base64 is roughly 4.5MB of decoded image.
+  const MAX_PROGRESS_PHOTO_BASE64 = 6 * 1024 * 1024;
+  if (imageBase64.length > MAX_PROGRESS_PHOTO_BASE64) {
+    return res.status(400).json({
+      success: false,
+      error: 'Image is too large. Maximum size: 6MB'
+    });
+  }
+
+  if (note !== undefined && note !== null && String(note).length > 280) {
+    return res.status(400).json({
+      success: false,
+      error: 'Note is too long (max 280 characters).'
+    });
+  }
+
+  let normalizedWeight = null;
+  if (weightKg !== undefined && weightKg !== null && weightKg !== '') {
+    const weight = Number(weightKg);
+    if (!Number.isFinite(weight) || weight < 25 || weight > 400) {
+      return res.status(400).json({
+        success: false,
+        error: 'weightKg must be a number between 25 and 400.'
+      });
+    }
+    normalizedWeight = Math.round(weight * 10) / 10;
+  }
+
+  if (date !== undefined && date !== null && date !== '' && !DATE_ONLY_PATTERN.test(String(date))) {
+    return res.status(400).json({
+      success: false,
+      error: 'Date must be in YYYY-MM-DD format.'
+    });
+  }
+
+  req.progressPhotoInput = {
+    imageBase64,
+    note: note ? String(note).trim() : null,
+    weightKg: normalizedWeight,
+    date: date ? String(date) : null
+  };
+
+  next();
+}
+
+/**
+ * Validate a water check-in (POST /api/weight).
+ *
+ * `date` is optional - the endpoint defaults to today - but when supplied it
+ * must be a real YYYY-MM-DD date so the one-entry-per-day index holds.
+ */
+export function validateWeightInput(req, res, next) {
+  const { weightKg, date } = req.body;
+
+  const weight = Number(weightKg);
+  if (!Number.isFinite(weight) || weight < 25 || weight > 400) {
+    return res.status(400).json({
+      success: false,
+      error: 'Weight must be a number between 25 and 400 kg.'
+    });
+  }
+
+  if (date !== undefined && date !== null && !DATE_ONLY_PATTERN.test(String(date))) {
+    return res.status(400).json({
+      success: false,
+      error: 'Date must be in YYYY-MM-DD format.'
+    });
+  }
+
+  req.weightInput = {
+    weightKg: Math.round(weight * 10) / 10,
+    date: date ? String(date) : null
+  };
+
+  next();
+}
+
 export function validateNutritionGoals(req, res, next) {
   const { dailyCalorieTarget, dailyProteinTarget, dailyCarbsTarget, dailyFatsTarget } = req.body;
 
@@ -251,7 +424,6 @@ export function validateProfileInput(req, res, next) {
 export function validateAuthInput(req, res, next) {
   const { email, password, username } = req.body;
 
-  // For signup
   if (req.path.includes('signup')) {
     if (!username || username.trim().length < 3) {
       return res.status(400).json({
@@ -259,18 +431,27 @@ export function validateAuthInput(req, res, next) {
         error: 'Username must be at least 3 characters long'
       });
     }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email || !emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide a valid email address'
+      });
+    }
   }
 
-  // Validate email
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!email || !emailRegex.test(email)) {
-    return res.status(400).json({
-      success: false,
-      error: 'Please provide a valid email address'
-    });
+  if (req.path.includes('login')) {
+    const loginIdentifier = (username || email || '').trim();
+
+    if (!loginIdentifier || loginIdentifier.length < 3) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide your username or email'
+      });
+    }
   }
 
-  // Validate password
   if (!password || password.length < 6) {
     return res.status(400).json({
       success: false,

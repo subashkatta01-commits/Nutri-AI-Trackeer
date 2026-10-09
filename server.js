@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -9,14 +10,16 @@ import {
   getFilteredLogs, getFilteredTotals, formatMealLogDetail,
   createUser, authenticateUser, getUserById, emailExists, emailExists as checkEmailExists,
   getNutritionGoals, updateNutritionGoals, createNutritionGoals,
-  getUserProfile, upsertUserProfile
+  getUserProfile, upsertUserProfile,
+  getWeightLogs, saveWeightLog, deleteWeightLog
 } from './backend/db.js';
 import { 
   validateMealInput, validateNutritionGoals, validateAuthInput, validateProfileInput,
-  validateMealEdit, verifyToken, errorHandler 
+  validateMealEdit, validateWeightInput, verifyToken, errorHandler 
 } from './backend/middleware.js';
 import { generateToken, formatUserResponse, sanitizeInput } from './backend/authUtils.js';
 import { calculateTargets } from './backend/nutritionCalculator.js';
+import { getInsights } from './backend/insights.js';
 
 dotenv.config();
 
@@ -25,8 +28,20 @@ const __dirname = path.dirname(__filename);
 const frontendDir = path.join(__dirname, 'frontend', 'public');
 
 const app = express();
+const allowedOrigins = (process.env.CORS_ORIGIN || [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5500',
+  'http://127.0.0.1:5500'
+].join(','))
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
 
 // Middleware
+app.use(cors({
+  origin: (origin, callback) => callback(null, !origin || allowedOrigins.includes(origin))
+}));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(frontendDir));
 
@@ -507,6 +522,27 @@ function resolveHistoryRange(rangeInput, startDateInput, endDateInput) {
   return { range, startDate: toLocalDateString(from), endDate: toLocalDateString(today) };
 }
 
+// ========== INSIGHTS RANGE RESOLUTION ==========
+
+// Insights is computed in memory, so the range is deliberately capped.
+const INSIGHTS_RANGES = [7, 30, 90];
+const DEFAULT_INSIGHTS_DAYS = 30;
+const MAX_WEIGHT_ENTRIES = 400;
+
+/**
+ * Turn the requested range into inclusive YYYY-MM-DD bounds ending today.
+ */
+function resolveInsightsRange(daysInput) {
+  const requested = parseInt(daysInput, 10);
+  const days = INSIGHTS_RANGES.includes(requested) ? requested : DEFAULT_INSIGHTS_DAYS;
+
+  const end = startOfToday();
+  const start = new Date(end);
+  start.setDate(start.getDate() - (days - 1));
+
+  return { days, startDate: toLocalDateString(start), endDate: toLocalDateString(end) };
+}
+
 // ========== AUTHENTICATION ENDPOINTS ==========
 
 /**
@@ -551,14 +587,15 @@ app.post('/api/auth/signup', validateAuthInput, (req, res) => {
  */
 app.post('/api/auth/login', validateAuthInput, (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { username, email, password } = req.body;
+    const loginIdentifier = (username || email || '').trim();
 
-    const user = authenticateUser(email.toLowerCase(), password);
+    const user = authenticateUser(loginIdentifier, password);
 
     if (!user) {
       return res.status(401).json({
         success: false,
-        error: 'Invalid email or password'
+        error: 'Invalid username or password'
       });
     }
 
@@ -568,7 +605,7 @@ app.post('/api/auth/login', validateAuthInput, (req, res) => {
       success: true,
       message: 'Login successful',
       token,
-      user: formatUserResponse(user)
+      user: formatUserResponse(getUserById(user.id))
     });
   } catch (error) {
     console.error('Login Error:', error);
@@ -1060,6 +1097,87 @@ app.get('/api/monthly-history', verifyToken, (req, res) => {
   }
 });
 
+// ========== INSIGHTS & WEIGHT ENDPOINTS ==========
+
+/**
+ * GET /api/insights
+ * Everything the Insights screen renders: weekly calorie average, macro
+ * consistency, goal completion, streaks, most common meals, meal timing and
+ * weight progress.
+ *
+ * Query params:
+ *   days  7 | 30 | 90  (default 30)
+ */
+app.get('/api/insights', verifyToken, (req, res) => {
+  try {
+    const { days, startDate, endDate } = resolveInsightsRange(req.query.days);
+    const insights = getInsights(req.userId, { startDate, endDate });
+
+    res.json({ success: true, insights });
+  } catch (error) {
+    console.error('Insights Error:', error);
+    res.status(500).json({ success: false, error: 'Failed to build insights.' });
+  }
+});
+
+/**
+ * GET /api/weight
+ * Weight check-ins, newest first.
+ */
+app.get('/api/weight', verifyToken, (req, res) => {
+  try {
+    res.json({ success: true, logs: getWeightLogs(req.userId, MAX_WEIGHT_ENTRIES) });
+  } catch (error) {
+    console.error('Fetch Weight Error:', error);
+    res.status(500).json({ success: false, error: 'Failed to retrieve weight history.' });
+  }
+});
+
+/**
+ * POST /api/weight
+ * Log today's weight. Re-posting the same day corrects that day's entry rather
+ * than adding a second point, so the progress chart stays one-per-day.
+ */
+app.post('/api/weight', verifyToken, validateWeightInput, (req, res) => {
+  try {
+    const today = toLocalDateString(startOfToday());
+    const loggedOn = req.weightInput.date || today;
+
+    if (loggedOn > today) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot log a weight for a future date.'
+      });
+    }
+
+    const log = saveWeightLog(req.userId, req.weightInput.weightKg, loggedOn);
+
+    res.status(201).json({ success: true, log });
+  } catch (error) {
+    console.error('Save Weight Error:', error);
+    res.status(500).json({ success: false, error: 'Failed to save weight.' });
+  }
+});
+
+/**
+ * DELETE /api/weight/:id
+ * Remove a single weight check-in.
+ */
+app.delete('/api/weight/:id', verifyToken, (req, res) => {
+  try {
+    const result = deleteWeightLog(req.params.id, req.userId);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ success: false, error: 'Weight entry not found' });
+    }
+
+    res.json({ success: true, message: 'Weight entry deleted' });
+  } catch (error) {
+    console.error('Delete Weight Error:', error);
+    res.status(500).json({ success: false, error: 'Failed to delete weight entry.' });
+  }
+});
+
 // Error handling middleware
 app.use(errorHandler);
 
@@ -1080,9 +1198,10 @@ const server = app.listen(PORT, () => {
 
 server.on('error', (error) => {
   if (error.code === 'EADDRINUSE') {
+    const suggestedPort = Number.isInteger(Number(PORT)) ? Number(PORT) + 1 : 3002;
     console.error(`Port ${PORT} is already in use. Stop the existing server or run with a different port:`);
-    console.error('$env:PORT=3001; npm start');
+    console.error(`$env:PORT=${suggestedPort}; npm start`);
     process.exit(1);
   }
   throw error;
-});
+}); 
