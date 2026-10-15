@@ -26,10 +26,10 @@
         <form id="loginForm" class="auth-form">
           <h2>Login</h2>
           <div class="form-group">
-            <input type="text" id="loginUsername" placeholder="Username" required>
+            <input type="text" id="loginUsername" placeholder="Username or email" maxlength="254" autocomplete="username" required>
           </div>
           <div class="form-group">
-            <input type="password" id="loginPassword" placeholder="Password" required>
+            <input type="password" id="loginPassword" placeholder="Password" maxlength="128" autocomplete="current-password" required>
           </div>
           <button type="submit" class="btn-primary">Sign In</button>
           <p class="auth-toggle">Don't have an account? <a href="#" id="toggleToSignup">Sign up</a></p>
@@ -40,13 +40,13 @@
         <form id="signupForm" class="auth-form hidden">
           <h2>Create Account</h2>
           <div class="form-group">
-            <input type="text" id="signupUsername" placeholder="Username" required>
+            <input type="text" id="signupUsername" placeholder="Username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_.-]+" autocomplete="username" required>
           </div>
           <div class="form-group">
-            <input type="email" id="signupEmail" placeholder="Email" required>
+            <input type="email" id="signupEmail" placeholder="Email" maxlength="254" autocomplete="email" required>
           </div>
           <div class="form-group">
-            <input type="password" id="signupPassword" placeholder="Password (min 6 chars)" required>
+            <input type="password" id="signupPassword" placeholder="Password (min 8 characters)" minlength="8" maxlength="128" autocomplete="new-password" required>
           </div>
           <button type="submit" class="btn-primary">Create Account</button>
           <p class="auth-toggle">Already have an account? <a href="#" id="toggleToLogin">Sign in</a></p>
@@ -244,6 +244,10 @@
             <i class="fa-solid fa-weight-scale"></i>
             <span>Weight Progress</span>
           </button>
+          <button type="button" class="nav-item" data-view="health">
+            <i class="fa-solid fa-droplet"></i>
+            <span>Health Tracking</span>
+          </button>
           <button type="button" class="nav-item" data-view="weekly">
             <i class="fa-solid fa-calendar-week"></i>
             <span>Week by Week</span>
@@ -274,6 +278,14 @@
           <div class="topbar-greeting">
             <h2 id="greetingText">Welcome back</h2>
             <p id="summaryDateLine"></p>
+          </div>
+          <div class="topbar-actions">
+            <button type="button" id="compactSidebarBtn" class="btn-icon" title="Toggle compact sidebar" aria-label="Toggle compact sidebar">
+              <i class="fa-solid fa-bars-staggered"></i>
+            </button>
+            <button type="button" id="themeToggleBtn" class="btn-icon" title="Toggle light/dark theme" aria-label="Toggle theme">
+              <i class="fa-solid fa-moon"></i>
+            </button>
           </div>
           <div class="target-container">
             <label for="calorieGoalInput">Daily Calorie Target:</label>
@@ -433,7 +445,7 @@
                     </div>
                     <div class="preview-box hidden" id="previewBox">
                       <img id="imagePreview" src="" alt="Meal preview">
-                      <button type="button" id="removeImgBtn" class="btn-icon"><i class="fa-solid fa-xmark"></i></button>
+                      <button type="button" id="removeImgBtn" class="btn-icon" title="Remove image" aria-label="Remove image"><i class="fa-solid fa-xmark"></i></button>
                     </div>
                   </div>
                 </div>
@@ -470,7 +482,11 @@
                 <div class="chart-layout">
                   <div class="chart-container">
                     <canvas id="macroChart"></canvas>
-                    <div id="macroChartEmpty" class="chart-empty">No meals logged yet</div>
+                    <div id="macroChartEmpty" class="chart-empty empty-state">
+                      <i class="fa-solid fa-chart-pie"></i>
+                      <p>No meals logged yet</p>
+                      <small>Log a meal to see your macro breakdown</small>
+                    </div>
                   </div>
                   <div class="macro-stats">
                     <div class="macro-item protein">
@@ -740,6 +756,50 @@
           </section>
         </section><!-- /view-weight -->
 
+        <!-- ========== VIEW: HEALTH TRACKING ========== -->
+        <section id="view-health" class="view hidden">
+          <section class="card insight-panel">
+            <h3><i class="fa-solid fa-droplet"></i> Water Intake</h3>
+            <form class="weight-form" id="waterForm">
+              <input type="number" id="waterInput" min="0" max="20000" step="50" placeholder="ml" aria-label="Water intake in milliliters" required>
+              <button type="submit" class="btn-save-edit"><i class="fa-solid fa-plus"></i> Log</button>
+            </form>
+            <p class="insight-note" id="waterStatus">No water logged today.</p>
+            <p class="message" id="waterMessage"></p>
+          </section>
+
+          <section class="card insight-panel" style="margin-top: var(--space-4);">
+            <h3><i class="fa-solid fa-person-running"></i> Exercise</h3>
+            <form class="row-edit-form" id="exerciseForm">
+              <div class="row-edit-grid">
+                <label><span>Activity</span><input type="text" id="exerciseActivity" placeholder="Running" required></label>
+                <label><span>Minutes</span><input type="number" id="exerciseMinutes" min="0" max="1440" step="1" value="30" required></label>
+                <label><span>Calories burned</span><input type="number" id="exerciseCalories" min="0" max="10000" step="1" value="0"></label>
+              </div>
+              <div class="row-edit-actions">
+                <button type="submit" class="btn-save-edit"><i class="fa-solid fa-plus"></i> Log exercise</button>
+              </div>
+            </form>
+            <p class="message" id="exerciseMessage"></p>
+            <ul id="exerciseList" class="detail-items"></ul>
+          </section>
+
+          <section class="card insight-panel" style="margin-top: var(--space-4);">
+            <h3><i class="fa-solid fa-moon"></i> Sleep</h3>
+            <form class="weight-form" id="sleepForm">
+              <input type="number" id="sleepHours" min="0" max="24" step="0.5" placeholder="Hours" aria-label="Sleep hours" required>
+              <select id="sleepQuality" aria-label="Sleep quality">
+                <option value="Good">Good</option>
+                <option value="Fair">Fair</option>
+                <option value="Poor">Poor</option>
+              </select>
+              <button type="submit" class="btn-save-edit"><i class="fa-solid fa-plus"></i> Log sleep</button>
+            </form>
+            <p class="insight-note" id="sleepStatus">No sleep logged.</p>
+            <p class="message" id="sleepMessage"></p>
+          </section>
+        </section><!-- /view-health -->
+
         <!-- ========== VIEW: WEEK BY WEEK ========== -->
         <section id="view-weekly" class="view hidden">
           <section class="card insight-panel">
@@ -813,6 +873,7 @@
     </div>
   </div>
 
+  <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
   <script src="app.js?v=20261009-2"></script>
 </body>
 </html>

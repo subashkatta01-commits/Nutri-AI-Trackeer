@@ -11,11 +11,15 @@ import {
   createUser, authenticateUser, getUserById, emailExists, emailExists as checkEmailExists,
   getNutritionGoals, updateNutritionGoals, createNutritionGoals,
   getUserProfile, upsertUserProfile,
-  getWeightLogs, saveWeightLog, deleteWeightLog
+  getWeightLogs, saveWeightLog, deleteWeightLog,
+  saveWaterLog, getWaterLogForDate, getWaterLogs, deleteWaterLog,
+  getExerciseLogs, saveExerciseLog, deleteExerciseLog,
+  getSleepLogForDate, getSleepLogs, saveSleepLog, deleteSleepLog,
+  toLocalDateString
 } from './backend/db.js';
 import { 
   validateMealInput, validateNutritionGoals, validateAuthInput, validateProfileInput,
-  validateMealEdit, validateWeightInput, verifyToken, errorHandler 
+  validateMealEdit, validateWeightInput, validateWaterInput, verifyToken, errorHandler, loginRateLimit, signupRateLimit
 } from './backend/middleware.js';
 import { generateToken, formatUserResponse, sanitizeInput } from './backend/authUtils.js';
 import { calculateTargets } from './backend/nutritionCalculator.js';
@@ -28,7 +32,21 @@ const __dirname = path.dirname(__filename);
 const frontendDir = path.join(__dirname, 'frontend', 'public');
 
 const app = express();
-const allowedOrigins = (process.env.CORS_ORIGIN || [
+const isProduction = process.env.NODE_ENV === 'production';
+const authSecret = process.env.JWT_SECRET || process.env.AUTH_SECRET;
+if (!authSecret || Buffer.byteLength(authSecret) < 32) {
+  throw new Error('Set JWT_SECRET (or AUTH_SECRET) to a random secret of at least 32 bytes.');
+}
+
+const configuredOrigins = (process.env.CORS_ORIGIN || '').split(',').map(origin => origin.trim()).filter(Boolean);
+if (isProduction && configuredOrigins.length === 0) {
+  throw new Error('Set CORS_ORIGIN to the comma-separated HTTPS origins allowed to access this app in production.');
+}
+if (isProduction && configuredOrigins.some(origin => !/^https:\/\//i.test(origin) || origin === '*')) {
+  throw new Error('Production CORS_ORIGIN entries must be exact HTTPS origins; wildcards are not allowed.');
+}
+
+const allowedOrigins = (configuredOrigins.length ? configuredOrigins : [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   'http://localhost:5500',
@@ -38,7 +56,16 @@ const allowedOrigins = (process.env.CORS_ORIGIN || [
   .map(origin => origin.trim())
   .filter(Boolean);
 
+app.set('trust proxy', ['true', '1'].includes((process.env.TRUST_PROXY || '').toLowerCase()) ? 1 : false);
+
 // Middleware
+app.use((req, res, next) => {
+  if (isProduction && !req.secure) {
+    return res.status(426).json({ success: false, error: 'HTTPS is required in production.' });
+  }
+  if (isProduction) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  next();
+});
 app.use(cors({
   origin: (origin, callback) => callback(null, !origin || allowedOrigins.includes(origin))
 }));
@@ -205,6 +232,24 @@ const toNumber = (value, fallback = 0) => {
 
 const VALID_EFFICIENCY_SCORES = new Set(['High', 'Medium', 'Low']);
 
+const VALID_CONFIDENCE_LEVELS = new Set(['High', 'Medium', 'Low']);
+
+function normalizeConfidence(value, fallback = 'Medium') {
+  const text = String(value || '').trim();
+  const capitalized = text ? text.charAt(0).toUpperCase() + text.slice(1).toLowerCase() : '';
+  return VALID_CONFIDENCE_LEVELS.has(capitalized) ? capitalized : fallback;
+}
+
+function normalizeStringList(value) {
+  if (!value) return [];
+  const source = Array.isArray(value) ? value : [value];
+  return source
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .slice(0, 20)
+    .map((item) => item.slice(0, 300));
+}
+
 function normalizeDetectedItems(items) {
   if (!Array.isArray(items)) return [];
   return items
@@ -212,7 +257,8 @@ function normalizeDetectedItems(items) {
     .slice(0, 40)
     .map((item) => ({
       name: String(item.name).trim().slice(0, 120),
-      estimatedPortion: String(item.estimatedPortion || '').trim().slice(0, 120)
+      estimatedPortion: String(item.estimatedPortion || '').trim().slice(0, 120),
+      confidence: item.confidence ? normalizeConfidence(item.confidence, '') : ''
     }));
 }
 
@@ -221,19 +267,45 @@ function normalizeMealAnalysis(parsed) {
   const score = String(parsed?.efficiencyScore || '').trim();
   const capitalized = score ? score.charAt(0).toUpperCase() + score.slice(1).toLowerCase() : '';
 
-  return {
+  const confidenceLevel = normalizeConfidence(parsed?.confidenceLevel, 'Medium');
+  const healthierSubstitutions = normalizeStringList(parsed?.healthierSubstitutions);
+  const whatToAdd = normalizeStringList(parsed?.whatToAdd || parsed?.additions || parsed?.toAdd);
+  const whatToReduce = normalizeStringList(parsed?.whatToReduce || parsed?.reductions || parsed?.toReduce);
+  const warnings = normalizeStringList(parsed?.warnings);
+
+  const base = {
     mealName: String(parsed?.mealName || '').trim().slice(0, 160) || 'Logged Meal',
     detectedItems: normalizeDetectedItems(parsed?.detectedItems),
     nutritionalSummary: {
       totalCalories: toNumber(summary.totalCalories),
       proteinGrams: toNumber(summary.proteinGrams),
       carbsGrams: toNumber(summary.carbsGrams),
-      fatsGrams: toNumber(summary.fatsGrams)
+      fatsGrams: toNumber(summary.fatsGrams),
+      fiberGrams: toNumber(summary.fiberGrams || summary.fiber),
+      sugarGrams: toNumber(summary.sugarGrams || summary.sugar),
+      sodiumMg: toNumber(summary.sodiumMg || summary.sodium)
     },
     efficiencyScore: VALID_EFFICIENCY_SCORES.has(capitalized) ? capitalized : 'Medium',
+    confidenceLevel,
     goalAlignmentReason: String(parsed?.goalAlignmentReason || '').trim().slice(0, 1000),
-    suggestedAdjustments: String(parsed?.suggestedAdjustments || '').trim().slice(0, 1000)
+    suggestedAdjustments: String(parsed?.suggestedAdjustments || '').trim().slice(0, 1000),
+    healthierSubstitutions,
+    whatToAdd,
+    whatToReduce,
+    warnings
   };
+
+  base.analysisDetails = {
+    confidenceLevel,
+    healthierSubstitutions,
+    whatToAdd,
+    whatToReduce,
+    warnings,
+    goalAlignmentReason: base.goalAlignmentReason,
+    suggestedAdjustments: base.suggestedAdjustments
+  };
+
+  return base;
 }
 
 const AI_PROVIDER_LABEL = { groq: 'Groq', gemini: 'Google Gemini' };
@@ -458,14 +530,6 @@ const DEFAULT_HISTORY_PAGE_SIZE = 25;
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-// Format a Date as YYYY-MM-DD in *local* time, matching the 'localtime' modifier
-// used by every SQL date filter - mixing UTC and local here silently drops meals.
-function toLocalDateString(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
 
 function startOfToday() {
   const now = new Date();
@@ -549,7 +613,7 @@ function resolveInsightsRange(daysInput) {
  * POST /api/auth/signup
  * Create a new user account
  */
-app.post('/api/auth/signup', validateAuthInput, (req, res) => {
+app.post('/api/auth/signup', signupRateLimit, validateAuthInput, (req, res) => {
   try {
     const { username, email, password } = req.body;
 
@@ -585,7 +649,7 @@ app.post('/api/auth/signup', validateAuthInput, (req, res) => {
  * POST /api/auth/login
  * Authenticate user
  */
-app.post('/api/auth/login', validateAuthInput, (req, res) => {
+app.post('/api/auth/login', loginRateLimit, validateAuthInput, (req, res) => {
   try {
     const { username, email, password } = req.body;
     const loginIdentifier = (username || email || '').trim();
@@ -805,22 +869,34 @@ Perform these steps:
 3. Calculate accurate total calories and macronutrient breakdown (Protein, Carbs, Fats in grams).
 4. Evaluate if this meal aligns well with the user's category goal.
 5. Provide concise, actionable advice.
+6. Rate your confidence in the analysis (High/Medium/Low) based on description/photo clarity and portion certainty.
+7. Suggest concrete healthier substitutions for less healthy items.
+8. List what to add (missing protein, fiber, vegetables, micronutrients) and what to reduce (excess calories, fat, sugar, sodium, portions).
+9. Add warnings for missing protein, fiber, or vegetables when applicable.
 
 Reply ONLY in raw JSON with no markdown:
 {
   "mealName": "Primary name of dish",
   "detectedItems": [
-    { "name": "Item Name", "estimatedPortion": "e.g., 150g or 2 pieces" }
+    { "name": "Item Name", "estimatedPortion": "e.g., 150g or 2 pieces", "confidence": "High" }
   ],
   "nutritionalSummary": {
     "totalCalories": 0,
     "proteinGrams": 0,
     "carbsGrams": 0,
-    "fatsGrams": 0
+    "fatsGrams": 0,
+    "fiberGrams": 0,
+    "sugarGrams": 0,
+    "sodiumMg": 0
   },
   "efficiencyScore": "High",
+  "confidenceLevel": "High",
   "goalAlignmentReason": "Why this meal fits the goal",
-  "suggestedAdjustments": "Clear actionable tweak"
+  "suggestedAdjustments": "Clear actionable tweak",
+  "healthierSubstitutions": ["Concrete healthier swap, e.g. brown rice instead of white rice"],
+  "whatToAdd": ["Concrete ingredient or food to add, e.g. a cup of leafy greens"],
+  "whatToReduce": ["Concrete ingredient or portion to reduce, e.g. cooking oil"],
+  "warnings": ["Warnings about missing protein, fiber, or vegetables; empty array if none"]
 }
 `;
 
@@ -859,6 +935,9 @@ Reply ONLY in raw JSON with no markdown:
       protein: parsedData.nutritionalSummary.proteinGrams,
       carbs: parsedData.nutritionalSummary.carbsGrams,
       fats: parsedData.nutritionalSummary.fatsGrams,
+      fiber: parsedData.nutritionalSummary.fiberGrams,
+      sugar: parsedData.nutritionalSummary.sugarGrams,
+      sodium: parsedData.nutritionalSummary.sodiumMg,
       efficiencyScore: parsedData.efficiencyScore,
       advice: parsedData.suggestedAdjustments,
       detectedItems: parsedData.detectedItems,
@@ -866,6 +945,7 @@ Reply ONLY in raw JSON with no markdown:
       // Stored so the details modal can show the photo. It is deliberately kept
       // out of list responses - see formatMealLogSummary().
       imageBase64: imageBase64 || null,
+      analysisDetails: parsedData.analysisDetails,
       originalInput: (textInput || '').trim().slice(0, 2000) || null
     }, req.userId);
 
@@ -1175,6 +1255,121 @@ app.delete('/api/weight/:id', verifyToken, (req, res) => {
   } catch (error) {
     console.error('Delete Weight Error:', error);
     res.status(500).json({ success: false, error: 'Failed to delete weight entry.' });
+  }
+});
+
+// ========== WATER INTAKE ENDPOINTS ==========
+app.get('/api/water', verifyToken, (req, res) => {
+  try {
+    const date = req.query.date || toLocalDateString(new Date());
+    res.json({ success: true, log: getWaterLogForDate(req.userId, date) });
+  } catch (error) {
+    console.error('Get Water Error:', error);
+    res.status(500).json({ success: false, error: 'Failed to retrieve water log.' });
+  }
+});
+
+app.post('/api/water', verifyToken, validateWaterInput, (req, res) => {
+  try {
+    const loggedOn = req.waterInput.date || toLocalDateString(new Date());
+    let intakeMl;
+    if (Object.prototype.hasOwnProperty.call(req.waterInput, 'intakeMl')) {
+      intakeMl = req.waterInput.intakeMl;
+    } else {
+      const existing = getWaterLogForDate(req.userId, loggedOn);
+      intakeMl = (existing?.intakeMl || 0) + (req.waterInput.deltaMl || 0);
+    }
+    const log = saveWaterLog(req.userId, intakeMl, loggedOn, req.waterInput.goalMl);
+    res.json({ success: true, log });
+  } catch (error) {
+    console.error('Save Water Error:', error);
+    res.status(500).json({ success: false, error: 'Failed to save water log.' });
+  }
+});
+
+app.delete('/api/water/:id', verifyToken, (req, res) => {
+  try {
+    const result = deleteWaterLog(req.params.id, req.userId);
+    if (result.changes === 0) return res.status(404).json({ success: false, error: 'Water entry not found' });
+    res.json({ success: true, message: 'Water entry deleted' });
+  } catch (error) {
+    console.error('Delete Water Error:', error);
+    res.status(500).json({ success: false, error: 'Failed to delete water entry.' });
+  }
+});
+
+// ========== EXERCISE ENDPOINTS ==========
+app.get('/api/exercise', verifyToken, (req, res) => {
+  try {
+    const logs = getExerciseLogs(req.userId, req.query.startDate || null, req.query.endDate || null);
+    res.json({ success: true, logs });
+  } catch (error) {
+    console.error('Get Exercise Error:', error);
+    res.status(500).json({ success: false, error: 'Failed to retrieve exercise logs.' });
+  }
+});
+
+app.post('/api/exercise', verifyToken, (req, res) => {
+  try {
+    const { activity, durationMin, caloriesBurned, date } = req.body;
+    if (!activity || !String(activity).trim()) return res.status(400).json({ success: false, error: 'Activity is required.' });
+    const loggedOn = (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) ? date : toLocalDateString(new Date());
+    const log = saveExerciseLog(req.userId, String(activity).trim().slice(0, 120), Number(durationMin) || 0, Number(caloriesBurned) || 0, loggedOn);
+    res.json({ success: true, log });
+  } catch (error) {
+    console.error('Save Exercise Error:', error);
+    res.status(500).json({ success: false, error: 'Failed to save exercise log.' });
+  }
+});
+
+app.delete('/api/exercise/:id', verifyToken, (req, res) => {
+  try {
+    const result = deleteExerciseLog(req.params.id, req.userId);
+    if (result.changes === 0) return res.status(404).json({ success: false, error: 'Exercise entry not found' });
+    res.json({ success: true, message: 'Exercise entry deleted' });
+  } catch (error) {
+    console.error('Delete Exercise Error:', error);
+    res.status(500).json({ success: false, error: 'Failed to delete exercise entry.' });
+  }
+});
+
+// ========== SLEEP ENDPOINTS ==========
+app.get('/api/sleep', verifyToken, (req, res) => {
+  try {
+    if (req.query.date) {
+      const log = getSleepLogForDate(req.userId, req.query.date);
+      return res.json({ success: true, log });
+    }
+    const logs = getSleepLogs(req.userId, req.query.startDate || null, req.query.endDate || null);
+    res.json({ success: true, logs });
+  } catch (error) {
+    console.error('Get Sleep Error:', error);
+    res.status(500).json({ success: false, error: 'Failed to retrieve sleep logs.' });
+  }
+});
+
+app.post('/api/sleep', verifyToken, (req, res) => {
+  try {
+    const { sleepHours, quality, date } = req.body;
+    const hours = Number(sleepHours);
+    if (!Number.isFinite(hours) || hours < 0 || hours > 24) return res.status(400).json({ success: false, error: 'Sleep hours must be between 0 and 24.' });
+    const loggedOn = (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) ? date : toLocalDateString(new Date());
+    const log = saveSleepLog(req.userId, hours, quality ? String(quality).trim().slice(0, 40) : null, loggedOn);
+    res.json({ success: true, log });
+  } catch (error) {
+    console.error('Save Sleep Error:', error);
+    res.status(500).json({ success: false, error: 'Failed to save sleep log.' });
+  }
+});
+
+app.delete('/api/sleep/:id', verifyToken, (req, res) => {
+  try {
+    const result = deleteSleepLog(req.params.id, req.userId);
+    if (result.changes === 0) return res.status(404).json({ success: false, error: 'Sleep entry not found' });
+    res.json({ success: true, message: 'Sleep entry deleted' });
+  } catch (error) {
+    console.error('Delete Sleep Error:', error);
+    res.status(500).json({ success: false, error: 'Failed to delete sleep entry.' });
   }
 });
 

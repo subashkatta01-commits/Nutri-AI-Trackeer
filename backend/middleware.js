@@ -3,6 +3,7 @@
  */
 
 import { getUserById } from './db.js';
+import { verifyJwtToken } from './authUtils.js';
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -422,29 +423,32 @@ export function validateProfileInput(req, res, next) {
 }
 
 export function validateAuthInput(req, res, next) {
-  const { email, password, username } = req.body;
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  const { email, password, username } = body;
 
   if (req.path.includes('signup')) {
-    if (!username || username.trim().length < 3) {
+    if (typeof username !== 'string' || username.trim().length < 3 || username.trim().length > 32 || !/^[a-zA-Z0-9_.-]+$/.test(username.trim())) {
       return res.status(400).json({
         success: false,
-        error: 'Username must be at least 3 characters long'
+        error: 'Username must be 3-32 characters and use only letters, numbers, dots, underscores, or hyphens.'
       });
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!email || !emailRegex.test(email)) {
+    if (typeof email !== 'string' || email.length > 254 || !emailRegex.test(email)) {
       return res.status(400).json({
         success: false,
-        error: 'Please provide a valid email address'
+        error: 'Please provide a valid email address (max 254 characters).'
       });
     }
   }
 
   if (req.path.includes('login')) {
-    const loginIdentifier = (username || email || '').trim();
+    const loginIdentifier = typeof username === 'string'
+      ? username.trim()
+      : typeof email === 'string' ? email.trim() : '';
 
-    if (!loginIdentifier || loginIdentifier.length < 3) {
+    if (!loginIdentifier || loginIdentifier.length < 3 || loginIdentifier.length > 254) {
       return res.status(400).json({
         success: false,
         error: 'Please provide your username or email'
@@ -452,19 +456,63 @@ export function validateAuthInput(req, res, next) {
     }
   }
 
-  if (!password || password.length < 6) {
+  if (typeof password !== 'string' || password.length === 0 || Buffer.byteLength(password, 'utf8') > 128) {
+    return res.status(400).json({ success: false, error: 'Password must be at most 128 bytes.' });
+  }
+
+  if (req.path.includes('signup') && password.length < 8) {
     return res.status(400).json({
       success: false,
-      error: 'Password must be at least 6 characters long'
+      error: 'Password must be at least 8 characters long.'
     });
   }
 
+  req.body = body;
   next();
 }
 
+function createAuthRateLimiter({ limit, windowMs }) {
+  const buckets = new Map();
+  let requestsSinceCleanup = 0;
+
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = req.ip || req.socket.remoteAddress || 'unknown';
+    let bucket = buckets.get(key);
+
+    if (!bucket || bucket.resetAt <= now) {
+      bucket = { count: 0, resetAt: now + windowMs };
+      buckets.set(key, bucket);
+    }
+
+    bucket.count += 1;
+    res.setHeader('RateLimit-Limit', limit);
+    res.setHeader('RateLimit-Remaining', Math.max(0, limit - bucket.count));
+    res.setHeader('RateLimit-Reset', Math.ceil(bucket.resetAt / 1000));
+
+    if (bucket.count > limit) {
+      const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+      res.setHeader('Retry-After', retryAfter);
+      return res.status(429).json({ success: false, error: 'Too many attempts. Please try again later.' });
+    }
+
+    requestsSinceCleanup += 1;
+    if (requestsSinceCleanup >= 1000) {
+      for (const [entryKey, entry] of buckets) {
+        if (entry.resetAt <= now) buckets.delete(entryKey);
+      }
+      requestsSinceCleanup = 0;
+    }
+
+    next();
+  };
+}
+
+export const loginRateLimit = createAuthRateLimiter({ limit: 10, windowMs: 15 * 60 * 1000 });
+export const signupRateLimit = createAuthRateLimiter({ limit: 5, windowMs: 60 * 60 * 1000 });
+
 /**
- * Verify JWT Token (session storage based)
- * In production, use a proper JWT library
+ * Verify signed HS256 access token and confirm its user still exists.
  */
 export function verifyToken(req, res, next) {
   const authorization = req.headers.authorization || '';
@@ -478,7 +526,7 @@ export function verifyToken(req, res, next) {
   }
 
   try {
-    const userId = parseInt(token);
+    const userId = verifyJwtToken(token);
     if (!Number.isInteger(userId) || userId < 1 || !getUserById(userId)) {
       throw new Error('Invalid token');
     }

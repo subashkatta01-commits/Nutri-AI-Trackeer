@@ -84,6 +84,30 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
+  -- Exercise sessions. A user can log multiple sessions per day, so no unique constraint.
+  CREATE TABLE IF NOT EXISTS exercise_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    activity TEXT NOT NULL,
+    duration_min INTEGER NOT NULL DEFAULT 0,
+    calories_burned INTEGER NOT NULL DEFAULT 0,
+    logged_on TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  -- Sleep entries, one per calendar day so a re-log corrects that night.
+  CREATE TABLE IF NOT EXISTS sleep_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    sleep_hours REAL NOT NULL,
+    sleep_quality TEXT,
+    logged_on TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, logged_on),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
   -- Progress photos are stored as base64 in their own table rather than on
   -- meal_logs: they are large, and they are read one at a time by the
   -- photo-comparison view instead of alongside every list query.
@@ -105,7 +129,11 @@ const MEAL_LOG_COLUMN_MIGRATIONS = [
   { name: 'detected_items', ddl: "ALTER TABLE meal_logs ADD COLUMN detected_items TEXT DEFAULT '[]'" },
   { name: 'goal_alignment_reason', ddl: 'ALTER TABLE meal_logs ADD COLUMN goal_alignment_reason TEXT' },
   { name: 'image_base64', ddl: 'ALTER TABLE meal_logs ADD COLUMN image_base64 TEXT' },
-  { name: 'original_input', ddl: 'ALTER TABLE meal_logs ADD COLUMN original_input TEXT' }
+  { name: 'original_input', ddl: 'ALTER TABLE meal_logs ADD COLUMN original_input TEXT' },
+  { name: 'analysis_details', ddl: "ALTER TABLE meal_logs ADD COLUMN analysis_details TEXT DEFAULT '{}'" },
+  { name: 'fiber', ddl: "ALTER TABLE meal_logs ADD COLUMN fiber REAL DEFAULT 0" },
+  { name: 'sugar', ddl: "ALTER TABLE meal_logs ADD COLUMN sugar REAL DEFAULT 0" },
+  { name: 'sodium', ddl: "ALTER TABLE meal_logs ADD COLUMN sodium REAL DEFAULT 0" }
 ];
 
 try {
@@ -148,7 +176,7 @@ export const DEFAULT_WATER_GOAL_ML = 2500;
  * Format a Date as YYYY-MM-DD in local time, matching the 'localtime' modifier
  * used by every SQL date filter.
  */
-function toLocalDateString(date) {
+export function toLocalDateString(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
@@ -633,8 +661,8 @@ export function getFrequentMeals(userId, startDate, endDate, limit = 5) {
 // The photo can be ~200KB of base64. Keep it out of list/aggregate responses and
 // only expose it on the single-log endpoint that feeds the details modal.
 const MEAL_LOG_SUMMARY_COLUMNS = `
-  id, meal_type, category, meal_name, calories, protein, carbs, fats,
-  efficiency_score, advice, goal_alignment_reason, detected_items, created_at
+  id, meal_type, category, meal_name, calories, protein, carbs, fats, fiber, sugar, sodium,
+  efficiency_score, advice, goal_alignment_reason, detected_items, analysis_details, created_at
 `;
 
 /**
@@ -650,6 +678,16 @@ function parseDetectedItems(value) {
   }
 }
 
+function parseAnalysisDetails(value) {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Shape a row for the history table: dates localised, JSON parsed, photo removed.
  */
@@ -659,6 +697,7 @@ function formatMealLogSummary(row) {
   const {
     image_base64: _omittedImage,
     detected_items,
+    analysis_details,
     created_at: createdAt,
     ...rest
   } = row;
@@ -666,6 +705,7 @@ function formatMealLogSummary(row) {
   return {
     ...rest,
     detectedItems: parseDetectedItems(detected_items),
+    analysisDetails: parseAnalysisDetails(analysis_details),
     created_at: createdAt
   };
 }
@@ -689,10 +729,11 @@ export function formatMealLogDetail(row) {
 export function saveMealLog(mealData, userId) {
   const stmt = db.prepare(`
     INSERT INTO meal_logs (
-      user_id, meal_type, category, meal_name, calories, protein, carbs, fats,
-      efficiency_score, advice, detected_items, goal_alignment_reason, image_base64, original_input
+      user_id, meal_type, category, meal_name, calories, protein, carbs, fats, fiber, sugar, sodium,
+      efficiency_score, advice, detected_items, goal_alignment_reason, image_base64, original_input,
+      analysis_details
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const info = stmt.run(
@@ -704,12 +745,16 @@ export function saveMealLog(mealData, userId) {
     mealData.protein || 0,
     mealData.carbs || 0,
     mealData.fats || 0,
+    mealData.fiber || 0,
+    mealData.sugar || 0,
+    mealData.sodium || 0,
     mealData.efficiencyScore || 'Medium',
     mealData.advice || '',
     JSON.stringify(mealData.detectedItems || []),
     mealData.goalAlignmentReason || '',
     mealData.imageBase64 || null,
-    mealData.originalInput || null
+    mealData.originalInput || null,
+    JSON.stringify(mealData.analysisDetails || {})
   );
 
   return info.lastInsertRowid;
@@ -778,7 +823,10 @@ export function getFilteredTotals(userId, { startDate, endDate, search } = {}) {
       IFNULL(SUM(calories), 0) as totalCalories,
       IFNULL(SUM(protein), 0) as totalProtein,
       IFNULL(SUM(carbs), 0) as totalCarbs,
-      IFNULL(SUM(fats), 0) as totalFats
+      IFNULL(SUM(fats), 0) as totalFats,
+      IFNULL(SUM(fiber), 0) as totalFiber,
+      IFNULL(SUM(sugar), 0) as totalSugar,
+      IFNULL(SUM(sodium), 0) as totalSodium
     FROM meal_logs
     WHERE ${where}
   `).get(...params);
@@ -819,7 +867,10 @@ export function getDailyTotals(userId) {
       IFNULL(SUM(calories), 0) as totalCalories,
       IFNULL(SUM(protein), 0) as totalProtein,
       IFNULL(SUM(carbs), 0) as totalCarbs,
-      IFNULL(SUM(fats), 0) as totalFats
+      IFNULL(SUM(fats), 0) as totalFats,
+      IFNULL(SUM(fiber), 0) as totalFiber,
+      IFNULL(SUM(sugar), 0) as totalSugar,
+      IFNULL(SUM(sodium), 0) as totalSodium
     FROM meal_logs
     WHERE user_id = ? AND DATE(created_at, 'localtime') = DATE('now', 'localtime')
   `);
@@ -835,7 +886,10 @@ export function getTotalsByDate(userId, date) {
       IFNULL(SUM(calories), 0) as totalCalories,
       IFNULL(SUM(protein), 0) as totalProtein,
       IFNULL(SUM(carbs), 0) as totalCarbs,
-      IFNULL(SUM(fats), 0) as totalFats
+      IFNULL(SUM(fats), 0) as totalFats,
+      IFNULL(SUM(fiber), 0) as totalFiber,
+      IFNULL(SUM(sugar), 0) as totalSugar,
+      IFNULL(SUM(sodium), 0) as totalSodium
     FROM meal_logs
     WHERE user_id = ? AND DATE(created_at, 'localtime') = ?
   `);
@@ -879,6 +933,9 @@ const EDITABLE_MEAL_FIELDS = new Map([
   ['protein', 'protein'],
   ['carbs', 'carbs'],
   ['fats', 'fats'],
+  ['fiber', 'fiber'],
+  ['sugar', 'sugar'],
+  ['sodium', 'sodium'],
   ['efficiencyScore', 'efficiency_score'],
   ['advice', 'advice'],
   ['goalAlignmentReason', 'goal_alignment_reason']
@@ -970,4 +1027,74 @@ export function getMealActivity(userId, startDate, endDate) {
   `);
 
   return stmt.all(userId, startDate, endDate, MAX_MEAL_ACTIVITY_ROWS);
+}
+// ========== EXERCISE LOGS ==========
+export function getExerciseLogs(userId, startDate, endDate) {
+  const args = [userId];
+  let where = 'user_id = ?';
+  if (startDate) { where += ' AND logged_on >= ?'; args.push(startDate); }
+  if (endDate) { where += ' AND logged_on <= ?'; args.push(endDate); }
+  return db.prepare(`SELECT id, activity, duration_min, calories_burned, logged_on, created_at FROM exercise_logs WHERE ${where} ORDER BY logged_on DESC, id DESC`).all(...args).map((row) => ({
+    id: row.id,
+    activity: row.activity,
+    durationMin: row.duration_min,
+    caloriesBurned: row.calories_burned,
+    date: row.logged_on,
+    createdAt: row.created_at
+  }));
+}
+
+export function saveExerciseLog(userId, activity, durationMin, caloriesBurned, loggedOn) {
+  const info = db.prepare(`
+    INSERT INTO exercise_logs (user_id, activity, duration_min, calories_burned, logged_on)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(userId, activity, durationMin || 0, caloriesBurned || 0, loggedOn);
+  const row = db.prepare('SELECT id, activity, duration_min, calories_burned, logged_on, created_at FROM exercise_logs WHERE id = ?').get(info.lastInsertRowid);
+  return {
+    id: row.id,
+    activity: row.activity,
+    durationMin: row.duration_min,
+    caloriesBurned: row.calories_burned,
+    date: row.logged_on,
+    createdAt: row.created_at
+  };
+}
+
+export function deleteExerciseLog(id, userId) {
+  return db.prepare('DELETE FROM exercise_logs WHERE id = ? AND user_id = ?').run(id, userId);
+}
+
+// ========== SLEEP LOGS ==========
+export function getSleepLogForDate(userId, date) {
+  const row = db.prepare('SELECT id, sleep_hours, sleep_quality, logged_on, created_at FROM sleep_logs WHERE user_id = ? AND logged_on = ?').get(userId, date);
+  if (!row) return null;
+  return { id: row.id, sleepHours: row.sleep_hours, quality: row.sleep_quality, date: row.logged_on, createdAt: row.created_at };
+}
+
+export function getSleepLogs(userId, startDate, endDate) {
+  const args = [userId];
+  let where = 'user_id = ?';
+  if (startDate) { where += ' AND logged_on >= ?'; args.push(startDate); }
+  if (endDate) { where += ' AND logged_on <= ?'; args.push(endDate); }
+  return db.prepare(`SELECT id, sleep_hours, sleep_quality, logged_on, created_at FROM sleep_logs WHERE ${where} ORDER BY logged_on DESC`).all(...args).map((row) => ({
+    id: row.id,
+    sleepHours: row.sleep_hours,
+    quality: row.sleep_quality,
+    date: row.logged_on,
+    createdAt: row.created_at
+  }));
+}
+
+export function saveSleepLog(userId, sleepHours, quality, loggedOn) {
+  db.prepare(`
+    INSERT INTO sleep_logs (user_id, sleep_hours, sleep_quality, logged_on)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(user_id, logged_on) DO UPDATE SET sleep_hours = excluded.sleep_hours, sleep_quality = excluded.sleep_quality
+  `).run(userId, sleepHours, quality || null, loggedOn);
+  const row = db.prepare('SELECT id, sleep_hours, sleep_quality, logged_on, created_at FROM sleep_logs WHERE user_id = ? AND logged_on = ?').get(userId, loggedOn);
+  return { id: row.id, sleepHours: row.sleep_hours, quality: row.sleep_quality, date: row.logged_on, createdAt: row.created_at };
+}
+
+export function deleteSleepLog(id, userId) {
+  return db.prepare('DELETE FROM sleep_logs WHERE id = ? AND user_id = ?').run(id, userId);
 }

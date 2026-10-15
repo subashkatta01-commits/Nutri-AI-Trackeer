@@ -41,5 +41,15 @@ vision-capable model enabled and `GROQ_MODEL` needs to point at one that is.
 
 ## Environment variables
 
-See `.env.example` for the full list. `AI_PROVIDER`, the matching API key, and the
-matching model are the only values required to start.
+See `.env.example` for the full list. `AUTH_SECRET` and the selected AI
+provider's API key are required to start; `PORT` and model names are optional.
+
+`AUTH_SECRET` must be a random value of at least 32 bytes. Existing accounts
+using the previous SHA-256 password format are upgraded to salted scrypt after
+their next successful login. Access tokens are signed HS256 tokens that expire
+after 12 hours, so users with older numeric tokens must sign in again.
+
+Login is limited to 10 attempts per IP per 15 minutes and signup to 5 attempts
+per IP per hour. In production, set `CORS_ORIGIN` to exact HTTPS origins. The
+server rejects plain HTTP and sends HSTS; when TLS terminates at a reverse proxy,
+set `TRUST_PROXY=true` so Express can verify the forwarded HTTPS connection.

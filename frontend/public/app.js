@@ -47,8 +47,45 @@ const GOAL_CATEGORY_MAP = {
 // ========== INITIALIZATION ==========
 
 document.addEventListener('DOMContentLoaded', () => {
+  applyStoredTheme();
+  applyStoredSidebarMode();
   checkAuthentication();
 });
+
+function applyStoredTheme() {
+  const theme = localStorage.getItem('theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', theme);
+  updateThemeIcon(theme);
+}
+
+function updateThemeIcon(theme) {
+  const btn = document.getElementById('themeToggleBtn');
+  if (!btn) return;
+  const icon = btn.querySelector('i');
+  if (icon) icon.className = theme === 'light' ? 'fa-solid fa-moon' : 'fa-solid fa-sun';
+  btn.title = theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme';
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  const next = current === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  updateThemeIcon(next);
+}
+
+function applyStoredSidebarMode() {
+  if (localStorage.getItem('compactSidebar') === '1') {
+    document.querySelector('.app-shell')?.classList.add('compact-sidebar');
+  }
+}
+
+function toggleCompactSidebar() {
+  const shell = document.querySelector('.app-shell');
+  if (!shell) return;
+  shell.classList.toggle('compact-sidebar');
+  localStorage.setItem('compactSidebar', shell.classList.contains('compact-sidebar') ? '1' : '0');
+}
 
 // ========== AUTHENTICATION ==========
 
@@ -56,7 +93,7 @@ async function checkAuthentication() {
   const token = localStorage.getItem('authToken');
   const user = localStorage.getItem('currentUser');
   
-  if (token && user && /^\d+$/.test(token)) {
+  if (token && user && token.split('.').length === 3) {
     try {
       authToken = token;
       currentUser = JSON.parse(user);
@@ -75,6 +112,7 @@ async function checkAuthentication() {
       openOnboarding(false);
     }
   } else {
+    if (token || user) clearAuthentication();
     showAuthScreen();
   }
 }
@@ -231,6 +269,24 @@ async function handleSignup(e) {
 function handleLogout() {
   clearAuthentication();
   location.reload();
+}
+
+function showToast(message, type = 'info', duration = 3200) {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  const iconClass = type === 'success' ? 'fa-circle-check' : type === 'error' ? 'fa-circle-exclamation' : 'fa-circle-info';
+  toast.innerHTML = `<i class="fa-solid ${iconClass}"></i><span>${escapeHtml(message)}</span>`;
+  container.appendChild(toast);
+  if (duration > 0) {
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(-6px)';
+      setTimeout(() => toast.remove(), 220);
+    }, duration);
+  }
+  return toast;
 }
 
 // ========== USER PROFILE / ONBOARDING ==========
@@ -646,11 +702,13 @@ async function handleSaveGoals(e) {
     if (!response.ok) {
       messageDiv.textContent = data.error || 'Failed to save goals';
       messageDiv.className = 'message error';
+      showToast(data.error || 'Failed to save goals', 'error');
       return;
     }
 
     messageDiv.textContent = 'Goals saved successfully!';
     messageDiv.className = 'message success';
+    showToast('Goals saved successfully!', 'success');
     currentGoals = {
       calories: goals.dailyCalorieTarget,
       protein: goals.dailyProteinTarget,
@@ -694,6 +752,7 @@ function switchView(name) {
     btn.classList.toggle('active', btn.dataset.view === name);
   });
 
+  if (name === 'health') loadHealthData();
   // Charts rendered while their view was display:none have no size yet.
   requestAnimationFrame(() => {
     const charts = [];
@@ -717,6 +776,11 @@ function setupEventListeners() {
   const logoutBtn = document.getElementById('logoutBtn');
   const settingsBtn = document.getElementById('settingsBtn');
   const goalsForm = document.getElementById('goalsForm');
+  const themeToggleBtn = document.getElementById('themeToggleBtn');
+  const compactSidebarBtn = document.getElementById('compactSidebarBtn');
+
+  if (themeToggleBtn) themeToggleBtn.addEventListener('click', toggleTheme);
+  if (compactSidebarBtn) compactSidebarBtn.addEventListener('click', toggleCompactSidebar);
 
   imageInput.addEventListener('change', handleImageUpload);
   removeImgBtn.addEventListener('click', clearImageUpload);
@@ -763,6 +827,7 @@ function setupEventListeners() {
   // Onboarding
   setupOnboarding();
   setupInsightsControls();
+  setupHealthControls();
 
   const editProfileBtn = document.getElementById('editProfileBtn');
   if (editProfileBtn) {
@@ -782,6 +847,7 @@ function setupEventListeners() {
   });
 
   setupHistoryControls();
+  updateThemeIcon(localStorage.getItem('theme') || 'dark');
   appListenersInitialized = true;
 }
 
@@ -993,7 +1059,7 @@ function renderHistoryRows(logs, { emptyMessage } = {}) {
   if (!tbody) return;
 
   if (!logs || logs.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" class="text-center">${emptyMessage || historyEmptyMessage()}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="text-center empty-state-cell"><div class="empty-state"><i class="fa-solid fa-plate-wheat"></i><p>${emptyMessage || historyEmptyMessage()}</p><small>Log a meal to get started</small></div></td></tr>`;
     return;
   }
 
@@ -1212,7 +1278,7 @@ async function saveMealEdit(event, id) {
     const data = await response.json();
 
     if (!response.ok) {
-      alert(data.error || 'Failed to update meal log.');
+      showToast(data.error || 'Failed to update meal log.', 'error');
       return;
     }
 
@@ -1220,7 +1286,7 @@ async function saveMealEdit(event, id) {
     await loadHistory({ reset: true });
     loadDailyData();
   } catch (error) {
-    alert('Error: ' + error.message);
+    showToast('Error: ' + error.message, 'error');
     if (submitBtn) {
       submitBtn.disabled = false;
       submitBtn.innerHTML = '<i class="fa-solid fa-check"></i> Save';
@@ -1276,6 +1342,16 @@ function renderMealDetails(log) {
   }
 
   const items = Array.isArray(log.detectedItems) ? log.detectedItems : [];
+  const analysisDetails = (log.analysisDetails && typeof log.analysisDetails === 'object') ? log.analysisDetails : {};
+  const confidenceLevel = normalizeConfidenceLabel(analysisDetails.confidenceLevel || analysisDetails.confidence || log.confidenceLevel);
+  const substitutions = toStringArray(analysisDetails.healthierSubstitutions);
+  const toAdd = toStringArray(analysisDetails.whatToAdd || analysisDetails.additions || analysisDetails.toAdd);
+  const toReduce = toStringArray(analysisDetails.whatToReduce || analysisDetails.reductions || analysisDetails.toReduce);
+  const warnings = toStringArray(analysisDetails.warnings);
+
+  const renderList = (values, emptyText) => values.length
+    ? `<ul class="detail-items">${values.map((value) => `<li><span class="detail-item-name">${escapeHtml(value)}</span></li>`).join('')}</ul>`
+    : `<p class="detail-text detail-muted">${escapeHtml(emptyText)}</p>`;
 
   body.innerHTML = `
     ${log.imageBase64
@@ -1317,6 +1393,18 @@ function renderMealDetails(log) {
           <span class="detail-macro-value">${log.fats}g</span>
           <span class="detail-macro-label">Fats</span>
         </div>
+        <div class="detail-macro">
+          <span class="detail-macro-value">${log.fiber || 0}g</span>
+          <span class="detail-macro-label">Fiber</span>
+        </div>
+        <div class="detail-macro">
+          <span class="detail-macro-value">${log.sugar || 0}g</span>
+          <span class="detail-macro-label">Sugar</span>
+        </div>
+        <div class="detail-macro">
+          <span class="detail-macro-value">${log.sodium || 0}mg</span>
+          <span class="detail-macro-label">Sodium</span>
+        </div>
       </div>
     </div>
 
@@ -1327,11 +1415,36 @@ function renderMealDetails(log) {
              ${items.map((item) => `
                <li>
                  <span class="detail-item-name">${escapeHtml(item.name)}</span>
-                 <span class="detail-item-portion">${escapeHtml(item.estimatedPortion || '')}</span>
+                 <span class="detail-item-portion">${escapeHtml(item.estimatedPortion || '')}${item.confidence ? ` · ${escapeHtml(item.confidence)}` : ''}</span>
                </li>
              `).join('')}
            </ul>`
         : '<p class="detail-text detail-muted">No individual foods were recorded for this meal.</p>'}
+    </div>
+
+    <div class="detail-block">
+      <h4><i class="fa-solid fa-gauge-high"></i> Confidence level</h4>
+      <p class="detail-text"><span class="${confidenceBadgeClass(confidenceLevel)}">${escapeHtml(confidenceLevel)}</span></p>
+    </div>
+
+    <div class="detail-block">
+      <h4><i class="fa-solid fa-right-left"></i> Healthier substitutions</h4>
+      ${renderList(substitutions, 'No healthier substitutions suggested.')}
+    </div>
+
+    <div class="detail-block">
+      <h4><i class="fa-solid fa-plus"></i> What to add</h4>
+      ${renderList(toAdd, 'Nothing specific to add.')}
+    </div>
+
+    <div class="detail-block">
+      <h4><i class="fa-solid fa-minus"></i> What to reduce</h4>
+      ${renderList(toReduce, 'Nothing specific to reduce.')}
+    </div>
+
+    <div class="detail-block">
+      <h4><i class="fa-solid fa-triangle-exclamation"></i> Warnings</h4>
+      ${renderList(warnings, 'No warnings.')}
     </div>
 
     ${log.goalAlignmentReason
@@ -1479,11 +1592,24 @@ async function handleFormSubmit(e) {
   const submitBtn = document.getElementById('submitBtn');
 
   if (!textInput && !currentBase64Image) {
-    alert('Please provide either a meal description or image.');
+    showToast('Please provide either a meal description or image.', 'error');
     return;
   }
 
   submitBtn.disabled = true;
+
+  const resultCard = document.getElementById('latestResultCard');
+  if (resultCard) {
+    resultCard.classList.remove('hidden');
+    resultCard.innerHTML = `
+      <div class="skeleton skeleton-card" aria-busy="true" aria-live="polite">
+        <div class="skeleton-text" style="width:60%"></div>
+        <div class="skeleton-text" style="width:90%"></div>
+        <div class="skeleton-text" style="width:75%"></div>
+        <div class="skeleton-text" style="width:80%"></div>
+      </div>
+    `;
+  }
 
   try {
     const requestBody = { mealType, category, textInput, imageBase64: currentBase64Image };
@@ -1513,15 +1639,16 @@ async function handleFormSubmit(e) {
     if (handleUnauthorized(response)) return;
 
     if (!response.ok) {
-      alert(data.error || 'Failed to analyze meal. Please try again.');
+      showToast(data.error || 'Failed to analyze meal. Please try again.', 'error');
       return;
     }
 
     displayAnalysisResult(data.data);
     loadDailyData();
     clearForm();
+    showToast('Meal analyzed and logged successfully.', 'success');
   } catch (error) {
-    alert('Error: ' + error.message);
+    showToast('Error: ' + error.message, 'error');
   } finally {
     submitBtn.disabled = false;
     submitBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Analyze & Log Meal';
@@ -1532,34 +1659,137 @@ function clearForm() {
   document.getElementById('mealForm').reset();
   clearImageUpload();
   setupAutoMealType();
+
+  // Keep the dietary goal tied to the user's profile after the form is cleared.
+  // form.reset() restores the HTML default ("Maintenance"), which used to stick on
+  // subsequent meals whenever the select was disabled by applyGoalToMealForm().
+  if (currentProfile && currentProfile.goal) {
+    applyGoalToMealForm(currentProfile.goal);
+  }
 }
 
 // ========== DASHBOARD DISPLAY ==========
 
+function toStringArray(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean);
+  if (value == null || value === '') return [];
+  return [String(value).trim()].filter(Boolean);
+}
+
+function normalizeConfidenceLabel(value) {
+  const text = String(value || '').trim();
+  const normalized = text ? text.charAt(0).toUpperCase() + text.slice(1).toLowerCase() : '';
+  return ['High', 'Medium', 'Low'].includes(normalized) ? normalized : 'Medium';
+}
+
+function confidenceBadgeClass(value) {
+  const normalized = normalizeConfidenceLabel(value).toLowerCase();
+  return `badge ${normalized}`;
+}
+
+function renderStringList(items, emptyText) {
+  if (!items || items.length === 0) {
+    return `<p class="detail-text detail-muted">${escapeHtml(emptyText)}</p>`;
+  }
+  return `<ul class="detail-items">${items.map((item) => `<li><span class="detail-item-name">${escapeHtml(item)}</span></li>`).join('')}</ul>`;
+}
+
 function displayAnalysisResult(data) {
   const resultCard = document.getElementById('latestResultCard');
-  const mealName = document.getElementById('resultMealName');
-  const scoreBadge = document.getElementById('resultScoreBadge');
-  const advice = document.getElementById('resultAdvice');
-  const plateItemsContainer = document.getElementById('plateItemsContainer');
-  const plateItemsList = document.getElementById('plateItemsList');
+  if (!resultCard) return;
 
-  mealName.textContent = data.mealName;
-  scoreBadge.textContent = data.efficiencyScore;
-  scoreBadge.className = `badge ${data.efficiencyScore.toLowerCase()}`;
-  advice.textContent = data.suggestedAdjustments || data.goalAlignmentReason;
+  const confidenceLevel = normalizeConfidenceLabel(data.confidenceLevel || data.confidence);
+  const substitutions = toStringArray(data.healthierSubstitutions);
+  const toAdd = toStringArray(data.whatToAdd || data.additions || data.toAdd);
+  const toReduce = toStringArray(data.whatToReduce || data.reductions || data.toReduce);
+  const warnings = toStringArray(data.warnings);
+  const detectedItems = Array.isArray(data.detectedItems) ? data.detectedItems : [];
 
-  plateItemsList.innerHTML = '';
-  if (data.detectedItems && data.detectedItems.length > 0) {
-    data.detectedItems.forEach((item) => {
-      const li = document.createElement('li');
-      li.innerHTML = `<strong>${item.name}</strong> — ${item.estimatedPortion}`;
-      plateItemsList.appendChild(li);
-    });
-    plateItemsContainer.classList.remove('hidden');
-  } else {
-    plateItemsContainer.classList.add('hidden');
-  }
+  const itemsHtml = detectedItems.length > 0
+    ? `<ul class="detail-items">${detectedItems.map((item) => `
+        <li>
+          <span class="detail-item-name">${escapeHtml(item.name || '')}</span>
+          <span class="detail-item-portion">${escapeHtml(item.estimatedPortion || '')}${item.confidence ? ` · ${escapeHtml(item.confidence)}` : ''}</span>
+        </li>
+      `).join('')}</ul>`
+    : '<p class="detail-text detail-muted">No individual foods were recorded for this meal.</p>';
+
+  resultCard.innerHTML = `
+    <div class="result-header">
+      <h3>${escapeHtml(data.mealName || 'Logged Meal')}</h3>
+      <span class="badge ${String(data.efficiencyScore || 'Medium').toLowerCase()}">${escapeHtml(data.efficiencyScore || 'Medium')}</span>
+    </div>
+
+    <div class="detail-meta">
+      <span class="detail-meta-item">Confidence: <span class="${confidenceBadgeClass(confidenceLevel)}">${escapeHtml(confidenceLevel)}</span></span>
+    </div>
+
+    <div class="detail-block">
+      <h4><i class="fa-solid fa-list-ul"></i> Detected ingredients & portions</h4>
+      ${itemsHtml}
+    </div>
+
+    <div class="detail-block">
+      <h4><i class="fa-solid fa-bolt"></i> Nutrition</h4>
+      <div class="detail-macros">
+        <div class="detail-macro detail-macro-cal">
+          <span class="detail-macro-value">${data.nutritionalSummary?.totalCalories ?? 0}</span>
+          <span class="detail-macro-label">kcal</span>
+        </div>
+        <div class="detail-macro detail-macro-protein">
+          <span class="detail-macro-value">${data.nutritionalSummary?.proteinGrams ?? 0}g</span>
+          <span class="detail-macro-label">Protein</span>
+        </div>
+        <div class="detail-macro detail-macro-carbs">
+          <span class="detail-macro-value">${data.nutritionalSummary?.carbsGrams ?? 0}g</span>
+          <span class="detail-macro-label">Carbs</span>
+        </div>
+        <div class="detail-macro detail-macro-fats">
+          <span class="detail-macro-value">${data.nutritionalSummary?.fatsGrams ?? 0}g</span>
+          <span class="detail-macro-label">Fats</span>
+        </div>
+        <div class="detail-macro">
+          <span class="detail-macro-value">${data.nutritionalSummary?.fiberGrams ?? 0}g</span>
+          <span class="detail-macro-label">Fiber</span>
+        </div>
+        <div class="detail-macro">
+          <span class="detail-macro-value">${data.nutritionalSummary?.sugarGrams ?? 0}g</span>
+          <span class="detail-macro-label">Sugar</span>
+        </div>
+        <div class="detail-macro">
+          <span class="detail-macro-value">${data.nutritionalSummary?.sodiumMg ?? 0}mg</span>
+          <span class="detail-macro-label">Sodium</span>
+        </div>
+      </div>
+    </div>
+
+    ${data.goalAlignmentReason ? `<div class="detail-block">
+      <h4><i class="fa-solid fa-bullseye"></i> Goal alignment</h4>
+      <p class="detail-text">${escapeHtml(data.goalAlignmentReason)}</p>
+    </div>` : ''}
+
+    <div class="detail-block">
+      <h4><i class="fa-solid fa-right-left"></i> Healthier substitutions</h4>
+      ${renderStringList(substitutions, 'No healthier substitutions suggested.')}
+    </div>
+
+    <div class="detail-block">
+      <h4><i class="fa-solid fa-plus"></i> What to add</h4>
+      ${renderStringList(toAdd, 'Nothing specific to add.')}
+    </div>
+
+    <div class="detail-block">
+      <h4><i class="fa-solid fa-minus"></i> What to reduce</h4>
+      ${renderStringList(toReduce, 'Nothing specific to reduce.')}
+    </div>
+
+    <div class="detail-block">
+      <h4><i class="fa-solid fa-triangle-exclamation"></i> Warnings</h4>
+      ${renderStringList(warnings, 'No warnings.')}
+    </div>
+
+    ${data.suggestedAdjustments ? `<p class="advice-text">${escapeHtml(data.suggestedAdjustments)}</p>` : ''}
+  `;
 
   resultCard.classList.remove('hidden');
 }
@@ -1732,12 +1962,13 @@ async function deleteMeal(id) {
       if (editingMealId === id) editingMealId = null;
       await loadHistory({ reset: true });
       loadDailyData();
+      showToast('Meal deleted.', 'success');
     } else {
       const data = await response.json().catch(() => ({}));
-      alert(data.error || 'Failed to delete meal log');
+      showToast(data.error || 'Failed to delete meal log', 'error');
     }
   } catch (error) {
-    alert('Error: ' + error.message);
+    showToast('Error: ' + error.message, 'error');
   }
 }
 
@@ -1752,14 +1983,14 @@ async function handleClearAll() {
 
     const data = await response.json();
     if (response.ok) {
-      alert(`Deleted ${data.deletedCount} meal logs`);
+      showToast(`Deleted ${data.deletedCount} meal logs`, 'success');
       detailCache.clear();
       editingMealId = null;
       await loadHistory({ reset: true });
       loadDailyData();
     }
   } catch (error) {
-    alert('Error: ' + error.message);
+    showToast('Error: ' + error.message, 'error');
   }
 }
 
@@ -1872,6 +2103,15 @@ const toLocalDateString = (date) => {
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
+
+function setupHealthControls() {
+  const waterForm = document.getElementById('waterForm');
+  if (waterForm) waterForm.addEventListener('submit', handleWaterSubmit);
+  const exerciseForm = document.getElementById('exerciseForm');
+  if (exerciseForm) exerciseForm.addEventListener('submit', handleExerciseSubmit);
+  const sleepForm = document.getElementById('sleepForm');
+  if (sleepForm) sleepForm.addEventListener('submit', handleSleepSubmit);
+}
 
 function setupInsightsControls() {
   const rangeSwitch = document.getElementById('insightsRangeSwitch');
@@ -2410,6 +2650,133 @@ async function handleWeightSubmit(e) {
  * Deliberately confirmed by the user - targets are personal, so they are never
  * overwritten silently.
  */
+function setWaterMessage(text, type) {
+  const el = document.getElementById('waterMessage');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `message ${type}`;
+}
+function setExerciseMessage(text, type) {
+  const el = document.getElementById('exerciseMessage');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `message ${type}`;
+}
+function setSleepMessage(text, type) {
+  const el = document.getElementById('sleepMessage');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `message ${type}`;
+}
+
+async function handleWaterSubmit(e) {
+  e.preventDefault();
+  const input = document.getElementById('waterInput');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  const intakeMl = parseInt(input.value, 10);
+  if (!Number.isFinite(intakeMl) || intakeMl < 0) {
+    setWaterMessage('Enter a valid amount in ml.', 'error');
+    return;
+  }
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const response = await fetch('/api/water', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+      body: JSON.stringify({ intakeMl })
+    });
+    const data = await response.json();
+    if (handleUnauthorized(response)) return;
+    if (!response.ok) { setWaterMessage(data.error || 'Failed to log water.', 'error'); return; }
+    setWaterMessage(`Logged ${data.log.intakeMl} ml for today.`, 'success');
+    input.value = '';
+    await loadHealthData();
+  } catch (error) {
+    setWaterMessage('Error: ' + error.message, 'error');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+async function handleExerciseSubmit(e) {
+  e.preventDefault();
+  const activity = document.getElementById('exerciseActivity').value.trim();
+  const duration = parseInt(document.getElementById('exerciseMinutes').value, 10) || 0;
+  const calories = parseInt(document.getElementById('exerciseCalories').value, 10) || 0;
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  if (!activity) { setExerciseMessage('Activity is required.', 'error'); return; }
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const response = await fetch('/api/exercise', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+      body: JSON.stringify({ activity, durationMin: duration, caloriesBurned: calories })
+    });
+    const data = await response.json();
+    if (handleUnauthorized(response)) return;
+    if (!response.ok) { setExerciseMessage(data.error || 'Failed to log exercise.', 'error'); return; }
+    setExerciseMessage(`Logged ${activity}.`, 'success');
+    await loadHealthData();
+  } catch (error) {
+    setExerciseMessage('Error: ' + error.message, 'error');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+async function handleSleepSubmit(e) {
+  e.preventDefault();
+  const hours = parseFloat(document.getElementById('sleepHours').value);
+  const quality = document.getElementById('sleepQuality').value;
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  if (!Number.isFinite(hours)) { setSleepMessage('Enter sleep hours.', 'error'); return; }
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const response = await fetch('/api/sleep', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+      body: JSON.stringify({ sleepHours: hours, quality })
+    });
+    const data = await response.json();
+    if (handleUnauthorized(response)) return;
+    if (!response.ok) { setSleepMessage(data.error || 'Failed to log sleep.', 'error'); return; }
+    setSleepMessage(`Logged ${hours} hours.`, 'success');
+    await loadHealthData();
+  } catch (error) {
+    setSleepMessage('Error: ' + error.message, 'error');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+async function loadHealthData() {
+  try {
+    const today = toLocalDateString(new Date());
+    const [waterRes, exerciseRes, sleepRes] = await Promise.all([
+      fetch(`/api/water?date=${today}`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
+      fetch('/api/exercise', { headers: { 'Authorization': `Bearer ${authToken}` } }),
+      fetch(`/api/sleep?date=${today}`, { headers: { 'Authorization': `Bearer ${authToken}` } })
+    ]);
+    if (waterRes.ok) {
+      const data = await waterRes.json();
+      const status = document.getElementById('waterStatus');
+      if (status) status.textContent = data.log ? `${data.log.intakeMl} ml logged today (goal ${data.log.goalMl} ml).` : 'No water logged today.';
+    }
+    if (exerciseRes.ok) {
+      const data = await exerciseRes.json();
+      const list = document.getElementById('exerciseList');
+      if (list) list.innerHTML = (data.logs || []).map((log) => `<li><span class="detail-item-name">${escapeHtml(log.activity)}</span> <span class="detail-item-portion">${log.durationMin} min · ${log.caloriesBurned} kcal</span></li>`).join('');
+    }
+    if (sleepRes.ok) {
+      const data = await sleepRes.json();
+      const status = document.getElementById('sleepStatus');
+      if (status) status.textContent = data.log ? `${data.log.sleepHours} hours (${data.log.quality || 'n/a'}).` : 'No sleep logged.';
+    }
+  } catch (error) {
+    console.error('Failed to load health data:', error);
+  }
+}
+
 async function applySuggestedTargets() {
   const suggested = insightsState.data?.weight?.suggestedTargets;
   if (!suggested) return;
@@ -2440,7 +2807,7 @@ async function applySuggestedTargets() {
     if (handleUnauthorized(response)) return;
 
     if (!response.ok) {
-      alert(data.error || 'Failed to update targets.');
+      showToast(data.error || 'Failed to update targets.', 'error');
       return;
     }
 
@@ -2448,7 +2815,7 @@ async function applySuggestedTargets() {
     await loadDailyData();
     setWeightMessage('Targets updated from your latest weight.', 'success');
   } catch (error) {
-    alert('Error: ' + error.message);
+    showToast('Error: ' + error.message, 'error');
   }
 }
 
