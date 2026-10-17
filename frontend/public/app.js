@@ -725,7 +725,526 @@ async function handleSaveGoals(e) {
   }
 }
 
-// ========== AUTO MEAL TYPE ==========
+// ========== PROFILE SETTINGS: CHANGE PASSWORD ==========
+
+async function handleChangePassword(e) {
+  e.preventDefault();
+  const messageDiv = document.getElementById('changePasswordMessage');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  messageDiv.textContent = '';
+  messageDiv.className = 'message';
+
+  const currentPassword = document.getElementById('cpCurrentPassword').value;
+  const newPassword = document.getElementById('cpNewPassword').value;
+  const confirmPassword = document.getElementById('cpConfirmPassword').value;
+
+  if (newPassword !== confirmPassword) {
+    messageDiv.textContent = 'New password and confirmation do not match.';
+    messageDiv.className = 'message error';
+    return;
+  }
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Changing...';
+  }
+
+  try {
+    const response = await fetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+
+    const data = await response.json();
+
+    if (handleUnauthorized(response)) return;
+
+    if (!response.ok) {
+      messageDiv.textContent = data.error || 'Failed to change password.';
+      messageDiv.className = 'message error';
+      showToast(data.error || 'Failed to change password.', 'error');
+      return;
+    }
+
+    messageDiv.textContent = 'Password changed successfully!';
+    messageDiv.className = 'message success';
+    showToast('Password changed successfully.', 'success');
+    document.getElementById('changePasswordForm').reset();
+    setTimeout(() => { messageDiv.textContent = ''; }, 3000);
+  } catch (error) {
+    messageDiv.textContent = 'Error: ' + error.message;
+    messageDiv.className = 'message error';
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Change Password';
+    }
+  }
+}
+
+// ========== PROFILE SETTINGS: FORGOT PASSWORD ==========
+
+async function handleForgotPassword(e) {
+  e.preventDefault();
+  const messageDiv = document.getElementById('forgotPasswordMessage');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  messageDiv.textContent = '';
+  messageDiv.className = 'message';
+
+  const email = document.getElementById('fpEmail').value;
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Sending...';
+  }
+
+  try {
+    const response = await fetch('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      // Still show generic success to avoid email enumeration
+      messageDiv.textContent = 'If an account exists for that email, a reset token has been generated.';
+      messageDiv.className = 'message success';
+      showToast('If an account exists, a reset token has been generated.', 'info');
+      document.getElementById('forgotPasswordForm').reset();
+      return;
+    }
+
+    // In development, show the token so the user can test the reset flow
+    if (data.resetToken) {
+      messageDiv.textContent = `Reset token generated: ${data.resetToken}`;
+      messageDiv.className = 'message success';
+      showToast('Reset token generated (dev mode). Copy it to reset your password.', 'info');
+
+      // Offer to open the reset modal with the token pre-filled
+      const openReset = confirm('A reset token has been generated. Open the reset password form now?');
+      if (openReset) {
+        openResetPasswordModal(data.resetToken);
+      }
+    } else {
+      messageDiv.textContent = 'If an account exists for that email, a reset token has been generated.';
+      messageDiv.className = 'message success';
+      showToast('If an account exists, a reset token has been generated.', 'info');
+    }
+
+    document.getElementById('forgotPasswordForm').reset();
+  } catch (error) {
+    messageDiv.textContent = 'Error: ' + error.message;
+    messageDiv.className = 'message error';
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Send Reset Link';
+    }
+  }
+}
+
+async function handleForgotPasswordModal(e) {
+  e.preventDefault();
+  const messageDiv = document.getElementById('modalForgotPasswordMessage');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  messageDiv.textContent = '';
+  messageDiv.className = 'message';
+
+  const email = document.getElementById('modalFpEmail').value;
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Sending...';
+  }
+
+  try {
+    const response = await fetch('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      messageDiv.textContent = 'If an account exists for that email, a reset token has been generated.';
+      messageDiv.className = 'message success';
+      document.getElementById('forgotPasswordModalForm').reset();
+      return;
+    }
+
+    if (data.resetToken) {
+      messageDiv.textContent = `Reset token: ${data.resetToken}`;
+      messageDiv.className = 'message success';
+      const openReset = confirm('A reset token has been generated. Open the reset password form now?');
+      if (openReset) {
+        closeForgotPasswordModal();
+        openResetPasswordModal(data.resetToken);
+      }
+    } else {
+      messageDiv.textContent = 'If an account exists for that email, a reset token has been generated.';
+      messageDiv.className = 'message success';
+    }
+
+    document.getElementById('forgotPasswordModalForm').reset();
+  } catch (error) {
+    messageDiv.textContent = 'Error: ' + error.message;
+    messageDiv.className = 'message error';
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Send Reset Token';
+    }
+  }
+}
+
+// ========== PROFILE SETTINGS: RESET PASSWORD ==========
+
+let pendingResetToken = null;
+
+function openResetPasswordModal(token = null) {
+  const overlay = document.getElementById('resetPasswordModalOverlay');
+  const tokenInput = document.getElementById('modalResetToken');
+  if (!overlay || !tokenInput) return;
+
+  if (token) {
+    tokenInput.value = token;
+    pendingResetToken = token;
+  } else if (pendingResetToken) {
+    tokenInput.value = pendingResetToken;
+  }
+
+  overlay.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeResetPasswordModal() {
+  const overlay = document.getElementById('resetPasswordModalOverlay');
+  if (!overlay) return;
+  overlay.classList.add('hidden');
+  document.getElementById('resetPasswordModalForm').reset();
+  document.getElementById('modalResetPasswordMessage').textContent = '';
+  document.body.style.overflow = '';
+}
+
+async function handleResetPassword(e) {
+  e.preventDefault();
+  const messageDiv = document.getElementById('modalResetPasswordMessage');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  messageDiv.textContent = '';
+  messageDiv.className = 'message';
+
+  const token = document.getElementById('modalResetToken').value || pendingResetToken;
+  const newPassword = document.getElementById('modalRpNewPassword').value;
+  const confirmPassword = document.getElementById('modalRpConfirmPassword').value;
+
+  if (newPassword !== confirmPassword) {
+    messageDiv.textContent = 'New password and confirmation do not match.';
+    messageDiv.className = 'message error';
+    return;
+  }
+
+  if (!token) {
+    messageDiv.textContent = 'Missing reset token.';
+    messageDiv.className = 'message error';
+    return;
+  }
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Resetting...';
+  }
+
+  try {
+    const response = await fetch('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, newPassword })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      messageDiv.textContent = data.error || 'Failed to reset password.';
+      messageDiv.className = 'message error';
+      return;
+    }
+
+    messageDiv.textContent = 'Password has been reset successfully! You can now sign in.';
+    messageDiv.className = 'message success';
+    showToast('Password reset successfully.', 'success');
+    document.getElementById('resetPasswordModalForm').reset();
+    pendingResetToken = null;
+
+    setTimeout(() => {
+      closeResetPasswordModal();
+      showAuthScreen();
+    }, 1500);
+  } catch (error) {
+    messageDiv.textContent = 'Error: ' + error.message;
+    messageDiv.className = 'message error';
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Reset Password';
+    }
+  }
+}
+
+// ========== PROFILE SETTINGS: EXPORT DATA ==========
+
+async function handleExportCsv() {
+  const messageDiv = document.getElementById('exportMessage');
+  messageDiv.textContent = 'Preparing CSV export...';
+  messageDiv.className = 'message';
+
+  try {
+    const response = await fetch('/api/export/csv', {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+
+    if (handleUnauthorized(response)) return;
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      messageDiv.textContent = data.error || 'Failed to export CSV.';
+      messageDiv.className = 'message error';
+      showToast(data.error || 'Failed to export CSV.', 'error');
+      return;
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nutriai-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    messageDiv.textContent = 'CSV exported successfully.';
+    messageDiv.className = 'message success';
+    showToast('CSV downloaded successfully.', 'success');
+  } catch (error) {
+    messageDiv.textContent = 'Error: ' + error.message;
+    messageDiv.className = 'message error';
+    showToast('Error: ' + error.message, 'error');
+  }
+}
+
+async function handleExportPdf() {
+  const messageDiv = document.getElementById('exportMessage');
+  messageDiv.textContent = 'Preparing PDF export...';
+  messageDiv.className = 'message';
+
+  try {
+    const response = await fetch('/api/export/pdf', {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+
+    if (handleUnauthorized(response)) return;
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      messageDiv.textContent = data.error || 'Failed to export PDF.';
+      messageDiv.className = 'message error';
+      showToast(data.error || 'Failed to export PDF.', 'error');
+      return;
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nutriai-export-${new Date().toISOString().slice(0, 10)}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    messageDiv.textContent = 'PDF exported successfully.';
+    messageDiv.className = 'message success';
+    showToast('PDF downloaded successfully.', 'success');
+  } catch (error) {
+    messageDiv.textContent = 'Error: ' + error.message;
+    messageDiv.className = 'message error';
+    showToast('Error: ' + error.message, 'error');
+  }
+}
+
+// ========== PROFILE SETTINGS: DELETE ACCOUNT ==========
+
+let pendingDeleteAccount = false;
+
+function openDeleteAccountConfirmModal() {
+  const overlay = document.getElementById('deleteAccountConfirmOverlay');
+  if (!overlay) return;
+  overlay.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeDeleteAccountConfirmModal() {
+  const overlay = document.getElementById('deleteAccountConfirmOverlay');
+  if (!overlay) return;
+  overlay.classList.add('hidden');
+  pendingDeleteAccount = false;
+  document.body.style.overflow = '';
+}
+
+async function handleDeleteAccount(e) {
+  e.preventDefault();
+  const messageDiv = document.getElementById('deleteAccountMessage');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  messageDiv.textContent = '';
+  messageDiv.className = 'message';
+
+  const password = document.getElementById('daPassword').value;
+
+  if (!password) {
+    messageDiv.textContent = 'Please enter your password to confirm.';
+    messageDiv.className = 'message error';
+    return;
+  }
+
+  openDeleteAccountConfirmModal();
+  // The actual deletion happens when the user clicks "Delete Account" in the modal
+  pendingDeleteAccount = true;
+  document.getElementById('daPassword').value = password; // store temporarily via closure below
+  // We'll use a module-level variable to pass the password
+  window._pendingDeletePassword = password;
+}
+
+async function executeDeleteAccount(password) {
+  try {
+    const response = await fetch('/api/auth/account', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify({ password })
+    });
+
+    const data = await response.json();
+
+    if (handleUnauthorized(response)) return;
+
+    if (!response.ok) {
+      showToast(data.error || 'Failed to delete account.', 'error');
+      closeDeleteAccountConfirmModal();
+      return;
+    }
+
+    showToast('Account deleted successfully.', 'success');
+    closeDeleteAccountConfirmModal();
+    clearAuthentication();
+    showAuthScreen();
+  } catch (error) {
+    showToast('Error: ' + error.message, 'error');
+    closeDeleteAccountConfirmModal();
+  }
+}
+
+// ========== FORGOT PASSWORD MODAL (from accounts page link) ==========
+
+function openForgotPasswordModal() {
+  const overlay = document.getElementById('forgotPasswordModalOverlay');
+  if (!overlay) return;
+  overlay.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeForgotPasswordModal() {
+  const overlay = document.getElementById('forgotPasswordModalOverlay');
+  if (!overlay) return;
+  overlay.classList.add('hidden');
+  document.getElementById('forgotPasswordModalForm').reset();
+  document.getElementById('modalForgotPasswordMessage').textContent = '';
+  document.body.style.overflow = '';
+}
+
+// ========== EVENT LISTENERS FOR PROFILE SETTINGS ==========
+
+function setupProfileSettingsListeners() {
+  const changePasswordForm = document.getElementById('changePasswordForm');
+  const forgotPasswordForm = document.getElementById('forgotPasswordForm');
+  const forgotPasswordModalForm = document.getElementById('forgotPasswordModalForm');
+  const resetPasswordModalForm = document.getElementById('resetPasswordModalForm');
+  const deleteAccountForm = document.getElementById('deleteAccountForm');
+  const exportCsvBtn = document.getElementById('exportCsvBtn');
+  const exportPdfBtn = document.getElementById('exportPdfBtn');
+
+  // Modals - close buttons
+  const closeForgotBtn = document.getElementById('closeForgotPasswordModalBtn');
+  const closeForgotBtn2 = document.getElementById('closeForgotPasswordModalBtn2');
+  const closeResetBtn = document.getElementById('closeResetPasswordModalBtn');
+  const closeResetBtn2 = document.getElementById('closeResetPasswordModalBtn2');
+  const closeDeleteConfirmBtn = document.getElementById('closeDeleteAccountConfirmBtn');
+  const cancelDeleteConfirmBtn = document.getElementById('cancelDeleteAccountConfirmBtn');
+  const acceptDeleteConfirmBtn = document.getElementById('acceptDeleteAccountConfirmBtn');
+
+  if (changePasswordForm) changePasswordForm.addEventListener('submit', handleChangePassword);
+  if (forgotPasswordForm) forgotPasswordForm.addEventListener('submit', handleForgotPassword);
+  if (forgotPasswordModalForm) forgotPasswordModalForm.addEventListener('submit', handleForgotPasswordModal);
+  if (resetPasswordModalForm) resetPasswordModalForm.addEventListener('submit', handleResetPassword);
+  if (deleteAccountForm) deleteAccountForm.addEventListener('submit', handleDeleteAccount);
+  if (exportCsvBtn) exportCsvBtn.addEventListener('click', handleExportCsv);
+  if (exportPdfBtn) exportPdfBtn.addEventListener('click', handleExportPdf);
+
+  // Modal close handlers
+  if (closeForgotBtn) closeForgotBtn.addEventListener('click', closeForgotPasswordModal);
+  if (closeForgotBtn2) closeForgotBtn2.addEventListener('click', closeForgotPasswordModal);
+  if (closeResetBtn) closeResetBtn.addEventListener('click', closeResetPasswordModal);
+  if (closeResetBtn2) closeResetBtn2.addEventListener('click', closeResetPasswordModal);
+  if (closeDeleteConfirmBtn) closeDeleteConfirmBtn.addEventListener('click', closeDeleteAccountConfirmModal);
+  if (cancelDeleteConfirmBtn) cancelDeleteConfirmBtn.addEventListener('click', closeDeleteAccountConfirmModal);
+  if (acceptDeleteConfirmBtn) {
+    acceptDeleteConfirmBtn.addEventListener('click', async () => {
+      const password = window._pendingDeletePassword;
+      closeDeleteAccountConfirmModal();
+      if (password) await executeDeleteAccount(password);
+      window._pendingDeletePassword = null;
+    });
+  }
+
+  // Click outside modal to close
+  const forgotOverlay = document.getElementById('forgotPasswordModalOverlay');
+  const resetOverlay = document.getElementById('resetPasswordModalOverlay');
+  const deleteOverlay = document.getElementById('deleteAccountConfirmOverlay');
+
+  if (forgotOverlay) {
+    forgotOverlay.addEventListener('click', (e) => {
+      if (e.target === forgotOverlay) closeForgotPasswordModal();
+    });
+  }
+  if (resetOverlay) {
+    resetOverlay.addEventListener('click', (e) => {
+      if (e.target === resetOverlay) closeResetPasswordModal();
+    });
+  }
+  if (deleteOverlay) {
+    deleteOverlay.addEventListener('click', (e) => {
+      if (e.target === deleteOverlay) closeDeleteAccountConfirmModal();
+    });
+  }
+
+  // Escape key already handled in setupEventListeners - add these modals
+  const originalKeydown = document.documentElement.ondown || null;
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeForgotPasswordModal();
+      closeResetPasswordModal();
+      closeDeleteAccountConfirmModal();
+    }
+  });
+}
 
 function setupAutoMealType() {
   const hour = new Date().getHours();
@@ -847,6 +1366,7 @@ function setupEventListeners() {
   });
 
   setupHistoryControls();
+  setupProfileSettingsListeners();
   updateThemeIcon(localStorage.getItem('theme') || 'dark');
   appListenersInitialized = true;
 }
@@ -1344,6 +1864,7 @@ function renderMealDetails(log) {
   const items = Array.isArray(log.detectedItems) ? log.detectedItems : [];
   const analysisDetails = (log.analysisDetails && typeof log.analysisDetails === 'object') ? log.analysisDetails : {};
   const confidenceLevel = normalizeConfidenceLabel(analysisDetails.confidenceLevel || analysisDetails.confidence || log.confidenceLevel);
+  const efficiencyScoreReason = String(analysisDetails.efficiencyScoreReason || '');
   const substitutions = toStringArray(analysisDetails.healthierSubstitutions);
   const toAdd = toStringArray(analysisDetails.whatToAdd || analysisDetails.additions || analysisDetails.toAdd);
   const toReduce = toStringArray(analysisDetails.whatToReduce || analysisDetails.reductions || analysisDetails.toReduce);
@@ -1366,6 +1887,10 @@ function renderMealDetails(log) {
         <span class="badge ${String(log.efficiency_score || 'medium').toLowerCase()}">${escapeHtml(log.efficiency_score)}</span>
       </span>
     </div>
+
+    ${efficiencyScoreReason
+      ? `<p class="score-reason"><strong>Why this score:</strong> ${escapeHtml(efficiencyScoreReason)}</p>`
+      : ''}
 
     ${log.originalInput
       ? `<div class="detail-block">
@@ -1704,6 +2229,7 @@ function displayAnalysisResult(data) {
   const toReduce = toStringArray(data.whatToReduce || data.reductions || data.toReduce);
   const warnings = toStringArray(data.warnings);
   const detectedItems = Array.isArray(data.detectedItems) ? data.detectedItems : [];
+  const efficiencyScore = normalizeConfidenceLabel(data.efficiencyScore);
 
   const itemsHtml = detectedItems.length > 0
     ? `<ul class="detail-items">${detectedItems.map((item) => `
@@ -1717,8 +2243,10 @@ function displayAnalysisResult(data) {
   resultCard.innerHTML = `
     <div class="result-header">
       <h3>${escapeHtml(data.mealName || 'Logged Meal')}</h3>
-      <span class="badge ${String(data.efficiencyScore || 'Medium').toLowerCase()}">${escapeHtml(data.efficiencyScore || 'Medium')}</span>
+      <span class="badge ${efficiencyScore.toLowerCase()}">${escapeHtml(efficiencyScore)}</span>
     </div>
+
+    ${data.efficiencyScoreReason ? `<p class="score-reason"><strong>Why this score:</strong> ${escapeHtml(data.efficiencyScoreReason)}</p>` : ''}
 
     <div class="detail-meta">
       <span class="detail-meta-item">Confidence: <span class="${confidenceBadgeClass(confidenceLevel)}">${escapeHtml(confidenceLevel)}</span></span>
@@ -2750,30 +3278,83 @@ async function handleSleepSubmit(e) {
 }
 
 async function loadHealthData() {
-  try {
-    const today = toLocalDateString(new Date());
-    const [waterRes, exerciseRes, sleepRes] = await Promise.all([
-      fetch(`/api/water?date=${today}`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
-      fetch('/api/exercise', { headers: { 'Authorization': `Bearer ${authToken}` } }),
-      fetch(`/api/sleep?date=${today}`, { headers: { 'Authorization': `Bearer ${authToken}` } })
-    ]);
-    if (waterRes.ok) {
-      const data = await waterRes.json();
-      const status = document.getElementById('waterStatus');
-      if (status) status.textContent = data.log ? `${data.log.intakeMl} ml logged today (goal ${data.log.goalMl} ml).` : 'No water logged today.';
+  const today = new Date();
+  const todayString = toLocalDateString(today);
+  const weekStart = new Date(today);
+  weekStart.setDate(weekStart.getDate() - 6);
+  const startDate = toLocalDateString(weekStart);
+  const rangeQuery = `startDate=${startDate}&endDate=${todayString}`;
+  const headers = { 'Authorization': `Bearer ${authToken}` };
+  const requests = await Promise.allSettled([
+    fetch(`/api/water?${rangeQuery}`, { headers }),
+    fetch(`/api/exercise?${rangeQuery}`, { headers }),
+    fetch(`/api/sleep?${rangeQuery}`, { headers }),
+    fetch(`/api/water?date=${todayString}`, { headers }),
+    fetch(`/api/sleep?date=${todayString}`, { headers })
+  ]);
+
+  const [waterHistory, exerciseHistory, sleepHistory, waterToday, sleepToday] = requests;
+  const responseFor = async (result, statusId) => {
+    const status = document.getElementById(statusId);
+    if (result.status === 'rejected') {
+      if (status) status.textContent = 'Could not reach the server. Check that the app is running, then reopen this section.';
+      return null;
     }
-    if (exerciseRes.ok) {
-      const data = await exerciseRes.json();
-      const list = document.getElementById('exerciseList');
-      if (list) list.innerHTML = (data.logs || []).map((log) => `<li><span class="detail-item-name">${escapeHtml(log.activity)}</span> <span class="detail-item-portion">${log.durationMin} min · ${log.caloriesBurned} kcal</span></li>`).join('');
+
+    if (handleUnauthorized(result.value)) return null;
+    if (!result.value.ok) {
+      const errorData = await result.value.json().catch(() => ({}));
+      if (status) status.textContent = errorData.error || `Could not load data (HTTP ${result.value.status}).`;
+      return null;
     }
-    if (sleepRes.ok) {
-      const data = await sleepRes.json();
-      const status = document.getElementById('sleepStatus');
-      if (status) status.textContent = data.log ? `${data.log.sleepHours} hours (${data.log.quality || 'n/a'}).` : 'No sleep logged.';
-    }
-  } catch (error) {
-    console.error('Failed to load health data:', error);
+
+    return result.value.json();
+  };
+
+  const [waterData, exerciseData, sleepData, todayWaterData, todaySleepData] = await Promise.all([
+    responseFor(waterHistory, 'waterHistoryStatus'),
+    responseFor(exerciseHistory, 'exerciseStatus'),
+    responseFor(sleepHistory, 'sleepHistoryStatus'),
+    responseFor(waterToday, 'waterStatus'),
+    responseFor(sleepToday, 'sleepStatus')
+  ]);
+
+  if (waterData) {
+    const list = document.getElementById('waterHistoryList');
+    const logs = waterData.logs || [];
+    if (list) list.innerHTML = logs.length
+      ? logs.map((log) => `<li><span class="detail-item-name">${escapeHtml(formatShortDate(log.date))}</span><span class="detail-item-portion">${Number(log.intakeMl).toLocaleString()} / ${Number(log.goalMl).toLocaleString()} ml</span></li>`).join('')
+      : '<li class="health-empty-row">No water entries in the last seven days.</li>';
+  }
+  if (todayWaterData) {
+    const status = document.getElementById('waterStatus');
+    if (status) status.textContent = todayWaterData.log
+      ? `${Number(todayWaterData.log.intakeMl).toLocaleString()} ml logged today (goal ${Number(todayWaterData.log.goalMl).toLocaleString()} ml).`
+      : 'No water logged today.';
+  }
+
+  if (exerciseData) {
+    const list = document.getElementById('exerciseList');
+    const logs = exerciseData.logs || [];
+    if (list) list.innerHTML = logs.length
+      ? logs.map((log) => `<li><span class="detail-item-name">${escapeHtml(log.activity)} · ${escapeHtml(formatShortDate(log.date))}</span><span class="detail-item-portion">${Number(log.durationMin)} min · ${Number(log.caloriesBurned)} kcal</span></li>`).join('')
+      : '<li class="health-empty-row">No exercise logged in the last seven days.</li>';
+    const status = document.getElementById('exerciseStatus');
+    if (status) status.textContent = `${logs.length} exercise session${logs.length === 1 ? '' : 's'} in the last seven days.`;
+  }
+
+  if (sleepData) {
+    const list = document.getElementById('sleepHistoryList');
+    const logs = sleepData.logs || [];
+    if (list) list.innerHTML = logs.length
+      ? logs.map((log) => `<li><span class="detail-item-name">${escapeHtml(formatShortDate(log.date))}</span><span class="detail-item-portion">${Number(log.sleepHours)} hr · ${escapeHtml(log.quality || 'unrated')}</span></li>`).join('')
+      : '<li class="health-empty-row">No sleep entries in the last seven days.</li>';
+  }
+  if (todaySleepData) {
+    const status = document.getElementById('sleepStatus');
+    if (status) status.textContent = todaySleepData.log
+      ? `${Number(todaySleepData.log.sleepHours)} hours (${todaySleepData.log.quality || 'unrated'}).`
+      : 'No sleep logged today.';
   }
 }
 
@@ -2832,5 +3413,12 @@ Object.assign(window, {
   requestDeleteMeal,
   closeConfirmDeleteModal,
   deleteMeal,
-  loadHistory
+  loadHistory,
+  openResetPasswordModal,
+  closeResetPasswordModal,
+  openDeleteAccountConfirmModal,
+  closeDeleteAccountConfirmModal,
+  openForgotPasswordModal,
+  closeForgotPasswordModal,
+  executeDeleteAccount
 });

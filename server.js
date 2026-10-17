@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
+import { PDFDocument } from 'pdfkit';
 import { 
   saveMealLog, getDailyLogs, getDailyTotals, deleteMealLog, deleteAllLogs, getMonthlyHistory,
   getMealLogById, updateMealLog,
@@ -15,11 +16,17 @@ import {
   saveWaterLog, getWaterLogForDate, getWaterLogs, deleteWaterLog,
   getExerciseLogs, saveExerciseLog, deleteExerciseLog,
   getSleepLogForDate, getSleepLogs, saveSleepLog, deleteSleepLog,
+  changeUserPassword, createPasswordResetToken, resetPasswordWithToken,
+  deleteUserAccount, exportUserData, comparePassword, getUserPasswordHash,
   toLocalDateString
 } from './backend/db.js';
 import { 
   validateMealInput, validateNutritionGoals, validateAuthInput, validateProfileInput,
-  validateMealEdit, validateWeightInput, validateWaterInput, verifyToken, errorHandler, loginRateLimit, signupRateLimit
+  validateMealEdit, validateWeightInput, validateWaterInput, verifyToken, errorHandler,
+  loginRateLimit, signupRateLimit,
+  validateChangePasswordInput, validateForgotPasswordInput, validateResetPasswordInput,
+  changePasswordRateLimit, forgotPasswordRateLimit, resetPasswordRateLimit,
+  deleteAccountRateLimit, exportRateLimit
 } from './backend/middleware.js';
 import { generateToken, formatUserResponse, sanitizeInput } from './backend/authUtils.js';
 import { calculateTargets } from './backend/nutritionCalculator.js';
@@ -230,14 +237,18 @@ const toNumber = (value, fallback = 0) => {
   return Number.isFinite(num) ? Math.round(Math.max(0, num)) : fallback;
 };
 
-const VALID_EFFICIENCY_SCORES = new Set(['High', 'Medium', 'Low']);
-
 const VALID_CONFIDENCE_LEVELS = new Set(['High', 'Medium', 'Low']);
 
 function normalizeConfidence(value, fallback = 'Medium') {
   const text = String(value || '').trim();
   const capitalized = text ? text.charAt(0).toUpperCase() + text.slice(1).toLowerCase() : '';
   return VALID_CONFIDENCE_LEVELS.has(capitalized) ? capitalized : fallback;
+}
+
+function normalizeEfficiencyScore(value) {
+  const match = String(value || '').trim().match(/^(high|medium|low)\b/i);
+  if (!match) return 'Medium';
+  return match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
 }
 
 function normalizeStringList(value) {
@@ -264,9 +275,6 @@ function normalizeDetectedItems(items) {
 
 function normalizeMealAnalysis(parsed) {
   const summary = parsed?.nutritionalSummary || {};
-  const score = String(parsed?.efficiencyScore || '').trim();
-  const capitalized = score ? score.charAt(0).toUpperCase() + score.slice(1).toLowerCase() : '';
-
   const confidenceLevel = normalizeConfidence(parsed?.confidenceLevel, 'Medium');
   const healthierSubstitutions = normalizeStringList(parsed?.healthierSubstitutions);
   const whatToAdd = normalizeStringList(parsed?.whatToAdd || parsed?.additions || parsed?.toAdd);
@@ -285,7 +293,8 @@ function normalizeMealAnalysis(parsed) {
       sugarGrams: toNumber(summary.sugarGrams || summary.sugar),
       sodiumMg: toNumber(summary.sodiumMg || summary.sodium)
     },
-    efficiencyScore: VALID_EFFICIENCY_SCORES.has(capitalized) ? capitalized : 'Medium',
+    efficiencyScore: normalizeEfficiencyScore(parsed?.efficiencyScore),
+    efficiencyScoreReason: String(parsed?.efficiencyScoreReason || parsed?.scoreReason || '').trim().slice(0, 300),
     confidenceLevel,
     goalAlignmentReason: String(parsed?.goalAlignmentReason || '').trim().slice(0, 1000),
     suggestedAdjustments: String(parsed?.suggestedAdjustments || '').trim().slice(0, 1000),
@@ -297,6 +306,7 @@ function normalizeMealAnalysis(parsed) {
 
   base.analysisDetails = {
     confidenceLevel,
+    efficiencyScoreReason: base.efficiencyScoreReason,
     healthierSubstitutions,
     whatToAdd,
     whatToReduce,
@@ -613,7 +623,7 @@ function resolveInsightsRange(daysInput) {
  * POST /api/auth/signup
  * Create a new user account
  */
-app.post('/api/auth/signup', signupRateLimit, validateAuthInput, (req, res) => {
+app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res) => {
   try {
     const { username, email, password } = req.body;
 
@@ -625,8 +635,8 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, (req, res) => {
       });
     }
 
-    // Create user
-    const userId = createUser(sanitizeInput(username), email.toLowerCase(), password);
+    // Create user (password is hashed with bcrypt inside db.js)
+    const userId = await createUser(sanitizeInput(username), email.toLowerCase(), password);
     const token = generateToken(userId);
     const user = getUserById(userId);
 
@@ -649,12 +659,12 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, (req, res) => {
  * POST /api/auth/login
  * Authenticate user
  */
-app.post('/api/auth/login', loginRateLimit, validateAuthInput, (req, res) => {
+app.post('/api/auth/login', loginRateLimit, validateAuthInput, async (req, res) => {
   try {
     const { username, email, password } = req.body;
     const loginIdentifier = (username || email || '').trim();
 
-    const user = authenticateUser(loginIdentifier, password);
+    const user = await authenticateUser(loginIdentifier, password);
 
     if (!user) {
       return res.status(401).json({
@@ -705,6 +715,310 @@ app.get('/api/auth/me', verifyToken, (req, res) => {
       success: false,
       error: 'Failed to fetch user information'
     });
+  }
+});
+
+/**
+ * POST /api/auth/change-password
+ * Change the authenticated user's password (requires current password).
+ */
+app.post('/api/auth/change-password', verifyToken, changePasswordRateLimit, validateChangePasswordInput, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    await changeUserPassword(req.userId, currentPassword, newPassword);
+    res.json({
+      success: true,
+      message: 'Password changed successfully.'
+    });
+  } catch (error) {
+    console.error('Change Password Error:', error);
+    res.status(400).json({
+      success: false,
+      error: error.message || 'Failed to change password'
+    });
+  }
+});
+
+/**
+ * POST /api/auth/forgot-password
+ * Generate a password reset token for the given email.
+ */
+app.post('/api/auth/forgot-password', forgotPasswordRateLimit, validateForgotPasswordInput, async (req, res) => {
+  try {
+    const { email } = req.body;
+    const result = await createPasswordResetToken(email);
+
+    // Always return a generic success to avoid email enumeration.
+    res.json({
+      success: true,
+      message: 'If an account exists for that email, a password reset token has been generated.',
+      // In development, include the token so the flow can be tested without email.
+      ...(process.env.NODE_ENV !== 'production' && result.token ? { resetToken: result.token } : {})
+    });
+  } catch (error) {
+    console.error('Forgot Password Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to process password reset request.'
+    });
+  }
+});
+
+/**
+ * POST /api/auth/reset-password
+ * Reset password using a valid reset token.
+ */
+app.post('/api/auth/reset-password', resetPasswordRateLimit, validateResetPasswordInput, async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+    await resetPasswordWithToken(token, newPassword);
+    res.json({
+      success: true,
+      message: 'Password has been reset successfully. You can now sign in with your new password.'
+    });
+  } catch (error) {
+    console.error('Reset Password Error:', error);
+    res.status(400).json({
+      success: false,
+      error: error.message || 'Failed to reset password'
+    });
+  }
+});
+
+/**
+ * DELETE /api/auth/account
+ * Delete the authenticated user's account and all associated data.
+ * Requires the current password for confirmation.
+ */
+app.delete('/api/auth/account', verifyToken, deleteAccountRateLimit, async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password || typeof password !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Password is required to confirm account deletion.'
+      });
+    }
+
+    const storedHash = getUserPasswordHash(req.userId);
+    if (!storedHash) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+
+    const valid = await comparePassword(password, storedHash);
+    if (!valid) {
+      return res.status(400).json({
+        success: false,
+        error: 'Incorrect password. Account deletion cancelled.'
+      });
+    }
+
+    deleteUserAccount(req.userId);
+    res.clearCookie ? res.clearCookie('authToken') : null;
+    res.json({
+      success: true,
+      message: 'Account and all associated data have been deleted.'
+    });
+  } catch (error) {
+    console.error('Delete Account Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to delete account'
+    });
+  }
+});
+
+// ========== DATA EXPORT ENDPOINTS ==========
+
+/**
+ * GET /api/export/csv
+ * Export the authenticated user's data as CSV (nutrition history, profile, goals, etc.).
+ */
+app.get('/api/export/csv', verifyToken, exportRateLimit, (req, res) => {
+  try {
+    const data = exportUserData(req.userId);
+
+    const lines = [];
+    lines.push('NutriAI Tracker - Data Export');
+    lines.push(`User: ${data.user.username} (${data.user.email})`);
+    lines.push(`Exported: ${data.exportedAt}`);
+    lines.push('');
+
+    // Profile
+    lines.push('=== PROFILE ===');
+    if (data.profile) {
+      lines.push(`Age,${data.profile.age}`);
+      lines.push(`Gender,${data.profile.gender}`);
+      lines.push(`Height (cm),${data.profile.height_cm}`);
+      lines.push(`Weight (kg),${data.profile.weight_kg}`);
+      lines.push(`Activity level,${data.profile.activity_level}`);
+      lines.push(`Goal,${data.profile.goal}`);
+      lines.push(`Dietary preferences,${data.profile.dietary_preferences}`);
+      lines.push(`Allergies,${data.profile.allergies}`);
+    } else {
+      lines.push('No profile data.');
+    }
+    lines.push('');
+
+    // Goals
+    lines.push('=== NUTRITION GOALS ===');
+    if (data.goals) {
+      lines.push(`Daily calorie target,${data.goals.daily_calorie_target}`);
+      lines.push(`Daily protein target (g),${data.goals.daily_protein_target}`);
+      lines.push(`Daily carbs target (g),${data.goals.daily_carbs_target}`);
+      lines.push(`Daily fats target (g),${data.goals.daily_fats_target}`);
+    } else {
+      lines.push('No goals set.');
+    }
+    lines.push('');
+
+    // Meal logs
+    lines.push('=== MEAL HISTORY ===');
+    lines.push('Date,Meal Type,Category,Meal Name,Calories,Protein (g),Carbs (g),Fats (g),Fiber (g),Sugar (g),Sodium (mg),Efficiency,Notes');
+    for (const log of data.mealLogs || []) {
+      lines.push([
+        log.created_at,
+        log.meal_type,
+        log.category,
+        `"${String(log.meal_name).replace(/"/g, '""')}"`,
+        log.calories,
+        log.protein,
+        log.carbs,
+        log.fats,
+        log.fiber,
+        log.sugar,
+        log.sodium,
+        log.efficiency_score,
+        `"${String(log.notes || '').replace(/"/g, '""')}"`
+      ].join(','));
+    }
+
+    // Weight logs
+    lines.push('');
+    lines.push('=== WEIGHT LOGS ===');
+    lines.push('Date,Weight (kg)');
+    for (const log of data.weightLogs || []) {
+      lines.push(`${log.logged_on},${log.weight_kg}`);
+    }
+
+    // Water logs
+    lines.push('');
+    lines.push('=== WATER LOGS ===');
+    lines.push('Date,Intake (ml),Goal (ml)');
+    for (const log of data.waterLogs || []) {
+      lines.push(`${log.logged_on},${log.intake_ml},${log.goal_ml}`);
+    }
+
+    // Exercise logs
+    lines.push('');
+    lines.push('=== EXERCISE LOGS ===');
+    lines.push('Date,Activity,Duration (min),Calories Burned');
+    for (const log of data.exerciseLogs || []) {
+      lines.push(`${log.logged_on},"${String(log.activity).replace(/"/g, '""')}",${log.duration_min},${log.calories_burned}`);
+    }
+
+    // Sleep logs
+    lines.push('');
+    lines.push('=== SLEEP LOGS ===');
+    lines.push('Date,Hours,Quality');
+    for (const log of data.sleepLogs || []) {
+      lines.push(`${log.logged_on},${log.sleep_hours},${log.sleep_quality || ''}`);
+    }
+
+    const csv = lines.join('\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="nutriai-export-${data.user.username}-${new Date().toISOString().slice(0,10)}.csv"`);
+    res.send(csv);
+  } catch (error) {
+    console.error('Export CSV Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to export data.'
+    });
+  }
+});
+
+/**
+ * GET /api/export/pdf
+ * Export the authenticated user's data as a PDF report.
+ */
+app.get('/api/export/pdf', verifyToken, exportRateLimit, async (req, res) => {
+  try {
+    const data = exportUserData(req.userId);
+
+    const doc = new PDFDocument({ size: 'A4', margin: 50 });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="nutriai-export-${data.user.username}-${new Date().toISOString().slice(0,10)}.pdf"`);
+
+    doc.pipe(res);
+
+    // Header
+    doc.fontSize(20).fillColor('#ff8a5c').text('NutriAI Tracker', { align: 'center' });
+    doc.fontSize(12).fillColor('#6b748d').text('Personal Nutrition Data Export', { align: 'center' });
+    doc.moveDown();
+    doc.fontSize(10).fillColor('#b4bcd0').text(`User: ${data.user.username} (${data.user.email})`);
+    doc.text(`Exported: ${data.exportedAt}`);
+    doc.moveDown();
+
+    // Profile section
+    doc.fontSize(14).fillColor('#eef1f8').text('Profile', { underline: true });
+    doc.fontSize(10);
+    if (data.profile) {
+      doc.text(`Age: ${data.profile.age}`);
+      doc.text(`Gender: ${data.profile.gender}`);
+      doc.text(`Height: ${data.profile.height_cm} cm`);
+      doc.text(`Weight: ${data.profile.weight_kg} kg`);
+      doc.text(`Activity Level: ${data.profile.activity_level}`);
+      doc.text(`Goal: ${data.profile.goal}`);
+      doc.text(`Dietary Preferences: ${data.profile.dietary_preferences || 'None'}`);
+      doc.text(`Allergies: ${data.profile.allergies || 'None'}`);
+    } else {
+      doc.text('No profile data available.');
+    }
+    doc.moveDown();
+
+    // Goals section
+    doc.fontSize(14).fillColor('#eef1f8').text('Nutrition Goals', { underline: true });
+    doc.fontSize(10);
+    if (data.goals) {
+      doc.text(`Daily Calorie Target: ${data.goals.daily_calorie_target} kcal`);
+      doc.text(`Daily Protein Target: ${data.goals.daily_protein_target} g`);
+      doc.text(`Daily Carbs Target: ${data.goals.daily_carbs_target} g`);
+      doc.text(`Daily Fats Target: ${data.goals.daily_fats_target} g`);
+    } else {
+      doc.text('No nutrition goals set.');
+    }
+    doc.moveDown();
+
+    // Meal history section
+    doc.fontSize(14).fillColor('#eef1f8').text('Meal History', { underline: true });
+    doc.fontSize(9);
+    if (data.mealLogs && data.mealLogs.length > 0) {
+      for (const log of data.mealLogs.slice(0, 50)) {
+        doc.text(
+          `${log.created_at} | ${log.meal_type} | ${log.meal_name} | ` +
+          `${log.calories} kcal | P:${log.protein}g C:${log.carbs}g F:${log.fats}g | ` +
+          `Fiber:${log.fiber}g Sugar:${log.sugar}g Sodium:${log.sodium}mg | ${log.efficiency_score}`
+        );
+        if (log.notes) doc.text(`  Notes: ${log.notes}`);
+      }
+      if (data.mealLogs.length > 50) {
+        doc.text(`... and ${data.mealLogs.length - 50} more meals.`);
+      }
+    } else {
+      doc.text('No meal history.');
+    }
+
+    doc.end();
+  } catch (error) {
+    console.error('Export PDF Error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Failed to export PDF.'
+      });
+    }
   }
 });
 
@@ -844,7 +1158,7 @@ app.put('/api/goals', verifyToken, validateNutritionGoals, (req, res) => {
  */
 app.post('/api/analyze-meal', verifyToken, validateMealInput, async (req, res) => {
   try {
-    const { mealType, category, textInput, imageBase64 } = req.body;
+    const { mealType, category, textInput, imageBase64, loggedOn, notes, imageUrl, imageMetadata, portionSizes } = req.body;
 
     const credentialError = getMissingCredentialError();
     if (credentialError) {
@@ -855,6 +1169,7 @@ app.post('/api/analyze-meal', verifyToken, validateMealInput, async (req, res) =
 You are an advanced AI Clinical Dietitian and Sports Nutritionist.
 Analyze the provided food description or photo.
 
+User Meal Type: "${mealType || 'Snack'}"
 User Fitness Category: "${category}"
 
 CRITICAL NUTRITIONAL RULES & SANITY CHECKS:
@@ -863,16 +1178,27 @@ CRITICAL NUTRITIONAL RULES & SANITY CHECKS:
 - Double-check macro values for realism! Never swap total calories (e.g., 188) into proteinGrams!
 - Ensure total calories roughly match macronutrients: Calories = (Protein * 4) + (Carbs * 4) + (Fats * 9).
 
+MEAL QUALITY SCORE (separate from confidence):
+- High: the portion is reasonably sized, the meal broadly supports the selected fitness goal, and it provides useful nutrition for its role. A simple snack can be High when it is a suitable snack; do not require every meal to contain vegetables.
+- Medium: the meal has useful qualities but also one notable gap/trade-off, or available details do not justify High or Low.
+- Low: use only when there is clear evidence of a substantial issue, such as a meal dominated by added sugar/refined ingredients, a clearly excessive portion that conflicts with the selected goal, or a strongly unbalanced complete meal.
+- Do not rate Low just because an ingredient, portion, vegetable, or macro is unknown. Keep uncertainty in confidenceLevel. Judge the described meal, not the user's whole-day diet.
+- Pick the closest supported rating, not the strictest one. Explain the rating in one short, specific sentence in efficiencyScoreReason.
+
 Perform these steps:
 1. Identify all distinct food items in the text or photo.
 2. Estimate the portion sizes (e.g., in grams or standard bowls/pieces).
 3. Calculate accurate total calories and macronutrient breakdown (Protein, Carbs, Fats in grams).
-4. Evaluate if this meal aligns well with the user's category goal.
-5. Provide concise, actionable advice.
-6. Rate your confidence in the analysis (High/Medium/Low) based on description/photo clarity and portion certainty.
-7. Suggest concrete healthier substitutions for less healthy items.
-8. List what to add (missing protein, fiber, vegetables, micronutrients) and what to reduce (excess calories, fat, sugar, sodium, portions).
-9. Add warnings for missing protein, fiber, or vegetables when applicable.
+4. Evaluate the meal against both its meal type and the user's fitness category.
+5. Make every substitution, addition, and reduction appropriate to the selected meal type and a realistic portion for that occasion. Keep the food format similar when suggesting a substitution.
+6. For Snack, recommend snack-sized, easy-to-eat options; do not suggest a bowl of rice, a full meal, or a side dish as the snack substitution unless the user explicitly describes that item as the snack. Examples can include fruit, yogurt, eggs, nuts, or roasted legumes only when suitable to the described diet and known restrictions.
+7. For Breakfast, prefer breakfast-appropriate options; for Lunch and Dinner, suggest meal-sized foods or sides that fit that meal. Do not turn a snack into a full meal or a main meal into a snack.
+8. Give no more than two specific additions and two reductions. Do not force a suggestion when the meal is already suitable; return an empty list when there is nothing useful to add or reduce.
+9. Provide concise, actionable advice.
+10. Rate your confidence in the analysis (High/Medium/Low) based on description/photo clarity and portion certainty.
+11. Suggest concrete healthier substitutions for less healthy items, keeping them appropriate to the meal type.
+12. List what to add or reduce only when it would make this particular meal more suitable.
+13. Add warnings for missing protein, fiber, or vegetables when applicable to a complete meal; do not warn that a snack lacks vegetables unless that is relevant to the snack itself.
 
 Reply ONLY in raw JSON with no markdown:
 {
@@ -890,12 +1216,13 @@ Reply ONLY in raw JSON with no markdown:
     "sodiumMg": 0
   },
   "efficiencyScore": "High",
+  "efficiencyScoreReason": "Brief reason for this meal-quality rating",
   "confidenceLevel": "High",
   "goalAlignmentReason": "Why this meal fits the goal",
   "suggestedAdjustments": "Clear actionable tweak",
-  "healthierSubstitutions": ["Concrete healthier swap, e.g. brown rice instead of white rice"],
-  "whatToAdd": ["Concrete ingredient or food to add, e.g. a cup of leafy greens"],
-  "whatToReduce": ["Concrete ingredient or portion to reduce, e.g. cooking oil"],
+  "healthierSubstitutions": ["A concrete healthier swap that fits the selected meal type; empty array if none is useful"],
+  "whatToAdd": ["A suitable, portion-appropriate food to add; empty array if none is useful"],
+  "whatToReduce": ["A specific ingredient or portion to reduce; empty array if none is useful"],
   "warnings": ["Warnings about missing protein, fiber, or vegetables; empty array if none"]
 }
 `;
@@ -940,13 +1267,18 @@ Reply ONLY in raw JSON with no markdown:
       sodium: parsedData.nutritionalSummary.sodiumMg,
       efficiencyScore: parsedData.efficiencyScore,
       advice: parsedData.suggestedAdjustments,
+      notes: notes || null,
       detectedItems: parsedData.detectedItems,
+      portionSizes: portionSizes || parsedData.detectedItems?.map((item) => item.estimatedPortion || null) || [],
       goalAlignmentReason: parsedData.goalAlignmentReason,
       // Stored so the details modal can show the photo. It is deliberately kept
       // out of list responses - see formatMealLogSummary().
       imageBase64: imageBase64 || null,
-      analysisDetails: parsedData.analysisDetails,
-      originalInput: (textInput || '').trim().slice(0, 2000) || null
+      imageUrl: imageUrl || null,
+      imageMetadata: imageMetadata || null,
+      originalInput: (textInput || '').trim().slice(0, 2000) || null,
+      loggedOn: loggedOn || null,
+      analysisDetails: parsedData.analysisDetails
     }, req.userId);
 
     res.json({ success: true, data: parsedData, mealId });
@@ -1261,6 +1593,15 @@ app.delete('/api/weight/:id', verifyToken, (req, res) => {
 // ========== WATER INTAKE ENDPOINTS ==========
 app.get('/api/water', verifyToken, (req, res) => {
   try {
+    if (req.query.startDate || req.query.endDate) {
+      const { startDate, endDate } = req.query;
+      const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+      if (!datePattern.test(startDate || '') || !datePattern.test(endDate || '') || startDate > endDate) {
+        return res.status(400).json({ success: false, error: 'Provide a valid startDate and endDate range.' });
+      }
+      return res.json({ success: true, logs: getWaterLogs(req.userId, startDate, endDate, 31) });
+    }
+
     const date = req.query.date || toLocalDateString(new Date());
     res.json({ success: true, log: getWaterLogForDate(req.userId, date) });
   } catch (error) {

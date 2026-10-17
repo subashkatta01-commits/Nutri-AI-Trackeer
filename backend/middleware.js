@@ -8,13 +8,13 @@ import { verifyJwtToken } from './authUtils.js';
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export function validateMealInput(req, res, next) {
-  const { mealType, category, textInput, imageBase64 } = req.body;
+  const { mealType, category, textInput, imageBase64, loggedOn, notes, imageUrl, portionSizes } = req.body;
 
   // Check that either text or image is provided
-  if (!textInput && !imageBase64) {
+  if (!textInput && !imageBase64 && !imageUrl) {
     return res.status(400).json({
       success: false,
-      error: 'Please provide either a meal description or image.'
+      error: 'Please provide either a meal description, image, or image URL.'
     });
   }
 
@@ -35,11 +35,29 @@ export function validateMealInput(req, res, next) {
     });
   }
 
+  // Validate user-selected meal date/time (ISO 8601)
+  if (loggedOn !== undefined && loggedOn !== null && loggedOn !== '') {
+    if (!/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/.test(String(loggedOn))) {
+      return res.status(400).json({
+        success: false,
+        error: 'Meal date/time must be in YYYY-MM-DD or ISO 8601 format.'
+      });
+    }
+  }
+
   // Validate image size (limit to ~5MB base64)
   if (imageBase64 && imageBase64.length > 5242880) {
     return res.status(400).json({
       success: false,
       error: 'Image is too large. Maximum size: 5MB'
+    });
+  }
+
+  // Validate image URL format
+  if (imageUrl && !/^https?:\/\/.+/i.test(String(imageUrl))) {
+    return res.status(400).json({
+      success: false,
+      error: 'Image URL must be a valid HTTP(S) URL.'
     });
   }
 
@@ -49,6 +67,30 @@ export function validateMealInput(req, res, next) {
       success: false,
       error: 'Description is too long. Maximum: 5000 characters'
     });
+  }
+
+  // Validate notes length
+  if (notes !== undefined && notes !== null && String(notes).length > 1000) {
+    return res.status(400).json({
+      success: false,
+      error: 'Notes are too long (max 1000 characters).'
+    });
+  }
+
+  // Validate portion sizes array
+  if (portionSizes !== undefined && portionSizes !== null) {
+    if (!Array.isArray(portionSizes)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Portion sizes must be an array.'
+      });
+    }
+    if (portionSizes.length > 40) {
+      return res.status(400).json({
+        success: false,
+        error: 'Portion sizes may contain at most 40 entries.'
+      });
+    }
   }
 
   next();
@@ -422,6 +464,19 @@ export function validateProfileInput(req, res, next) {
   next();
 }
 
+const PASSWORD_MAX_BYTES = 128;
+const PASSWORD_MIN_LENGTH = 8;
+
+// Commonly abused passwords that must never be allowed, even though they meet
+// the structural rules. Keep this small so the check stays O(1).
+const COMMON_PASSWORDS = new Set([
+  'password', 'password1', 'password123', '12345678', '123456789', '1234567890',
+  '12345678910', 'qwerty123', 'qwertyuiop', 'abc123456', 'abcd1234',
+  'letmein', 'letmein123', 'welcome', 'welcome1', 'monkey', 'monkey123',
+  'dragon', 'dragon123', 'admin', 'admin123', 'root1234', 'user', 'user1234',
+  '11111111', '22222222', '123321', '654321', 'iloveyou', 'sunshine', 'princess'
+]);
+
 export function validateAuthInput(req, res, next) {
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
   const { email, password, username } = body;
@@ -456,15 +511,37 @@ export function validateAuthInput(req, res, next) {
     }
   }
 
-  if (typeof password !== 'string' || password.length === 0 || Buffer.byteLength(password, 'utf8') > 128) {
-    return res.status(400).json({ success: false, error: 'Password must be at most 128 bytes.' });
+  if (typeof password !== 'string' || password.length === 0) {
+    return res.status(400).json({ success: false, error: 'Password is required.' });
   }
 
-  if (req.path.includes('signup') && password.length < 8) {
+  if (Buffer.byteLength(password, 'utf8') > PASSWORD_MAX_BYTES) {
+    return res.status(400).json({ success: false, error: `Password must be at most ${PASSWORD_MAX_BYTES} bytes.` });
+  }
+
+  if (req.path.includes('signup') && password.length < PASSWORD_MIN_LENGTH) {
     return res.status(400).json({
       success: false,
-      error: 'Password must be at least 8 characters long.'
+      error: `Password must be at least ${PASSWORD_MIN_LENGTH} characters long.`
     });
+  }
+
+  if (req.path.includes('signup')) {
+    // Structural strength: at least one letter and one digit.
+    if (!/(?=.*[a-zA-Z])(?=.*[0-9])/.test(password)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Password must contain at least one letter and one number.'
+      });
+    }
+
+    // Reject passwords on the common-password list.
+    if (COMMON_PASSWORDS.has(password.toLowerCase())) {
+      return res.status(400).json({
+        success: false,
+        error: 'This password is too easy to guess. Please choose a stronger one.'
+      });
+    }
   }
 
   req.body = body;
@@ -510,6 +587,110 @@ function createAuthRateLimiter({ limit, windowMs }) {
 
 export const loginRateLimit = createAuthRateLimiter({ limit: 10, windowMs: 15 * 60 * 1000 });
 export const signupRateLimit = createAuthRateLimiter({ limit: 5, windowMs: 60 * 60 * 1000 });
+
+// ========== AUTH RATE LIMITERS ==========
+
+export const changePasswordRateLimit = createAuthRateLimiter({ limit: 5, windowMs: 60 * 60 * 1000 });
+export const forgotPasswordRateLimit = createAuthRateLimiter({ limit: 3, windowMs: 60 * 60 * 1000 });
+export const resetPasswordRateLimit = createAuthRateLimiter({ limit: 5, windowMs: 60 * 60 * 1000 });
+export const deleteAccountRateLimit = createAuthRateLimiter({ limit: 3, windowMs: 60 * 60 * 1000 });
+export const exportRateLimit = createAuthRateLimiter({ limit: 10, windowMs: 60 * 60 * 1000 });
+
+function isStrongPassword(password) {
+  if (password.length < PASSWORD_MIN_LENGTH) return false;
+  if (!/(?=.*[a-zA-Z])(?=.*[0-9])/.test(password)) return false;
+  if (COMMON_PASSWORDS.has(password.toLowerCase())) return false;
+  return true;
+}
+
+export function validateChangePasswordInput(req, res, next) {
+  const { currentPassword, newPassword } = req.body;
+
+  if (typeof currentPassword !== 'string' || currentPassword.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Current password is required.'
+    });
+  }
+
+  if (typeof newPassword !== 'string' || newPassword.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'New password is required.'
+    });
+  }
+
+  if (Buffer.byteLength(newPassword, 'utf8') > PASSWORD_MAX_BYTES) {
+    return res.status(400).json({
+      success: false,
+      error: `New password must be at most ${PASSWORD_MAX_BYTES} bytes.`
+    });
+  }
+
+  if (!isStrongPassword(newPassword)) {
+    return res.status(400).json({
+      success: false,
+      error: 'New password must be at least 8 characters, contain at least one letter and one number, and not be a commonly used password.'
+    });
+  }
+
+  if (currentPassword === newPassword) {
+    return res.status(400).json({
+      success: false,
+      error: 'New password must be different from your current password.'
+    });
+  }
+
+  next();
+}
+
+export function validateForgotPasswordInput(req, res, next) {
+  const { email } = req.body;
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (typeof email !== 'string' || email.length > 254 || !emailRegex.test(email)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Please provide a valid email address.'
+    });
+  }
+
+  next();
+}
+
+export function validateResetPasswordInput(req, res, next) {
+  const { token, newPassword } = req.body;
+
+  if (typeof token !== 'string' || token.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Reset token is required.'
+    });
+  }
+
+  if (typeof newPassword !== 'string' || newPassword.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'New password is required.'
+    });
+  }
+
+  if (Buffer.byteLength(newPassword, 'utf8') > PASSWORD_MAX_BYTES) {
+    return res.status(400).json({
+      success: false,
+      error: `New password must be at most ${PASSWORD_MAX_BYTES} bytes.`
+    });
+  }
+
+  if (!isStrongPassword(newPassword)) {
+    return res.status(400).json({
+      success: false,
+      error: 'New password must be at least 8 characters, contain at least one letter and one number, and not be a commonly used password.'
+    });
+  }
+
+  next();
+}
 
 /**
  * Verify signed HS256 access token and confirm its user still exists.

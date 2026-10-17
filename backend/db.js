@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
+import bcrypt from 'bcrypt';
 
 const db = new Database('diet_tracker.sqlite');
 
@@ -47,16 +48,31 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS meal_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
     meal_type TEXT DEFAULT 'Snack',
     category TEXT NOT NULL,
     meal_name TEXT NOT NULL,
-    calories INTEGER NOT NULL,
-    protein INTEGER NOT NULL,
-    carbs INTEGER NOT NULL,
-    fats INTEGER NOT NULL,
-    efficiency_score TEXT NOT NULL,
+    calories INTEGER NOT NULL DEFAULT 0,
+    protein INTEGER NOT NULL DEFAULT 0,
+    carbs INTEGER NOT NULL DEFAULT 0,
+    fats INTEGER NOT NULL DEFAULT 0,
+    fiber REAL DEFAULT 0,
+    sugar REAL DEFAULT 0,
+    sodium REAL DEFAULT 0,
+    efficiency_score TEXT NOT NULL DEFAULT 'Medium',
     advice TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    notes TEXT,
+    detected_items TEXT DEFAULT '[]',
+    portion_sizes TEXT,
+    image_base64 TEXT,
+    image_url TEXT,
+    image_metadata TEXT,
+    goal_alignment_reason TEXT,
+    original_input TEXT,
+    analysis_details TEXT DEFAULT '{}',
+    logged_on TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
   -- One weight entry per calendar day, so the progress chart never has two
@@ -129,11 +145,16 @@ const MEAL_LOG_COLUMN_MIGRATIONS = [
   { name: 'detected_items', ddl: "ALTER TABLE meal_logs ADD COLUMN detected_items TEXT DEFAULT '[]'" },
   { name: 'goal_alignment_reason', ddl: 'ALTER TABLE meal_logs ADD COLUMN goal_alignment_reason TEXT' },
   { name: 'image_base64', ddl: 'ALTER TABLE meal_logs ADD COLUMN image_base64 TEXT' },
+  { name: 'image_url', ddl: 'ALTER TABLE meal_logs ADD COLUMN image_url TEXT' },
+  { name: 'image_metadata', ddl: 'ALTER TABLE meal_logs ADD COLUMN image_metadata TEXT' },
+  { name: 'portion_sizes', ddl: 'ALTER TABLE meal_logs ADD COLUMN portion_sizes TEXT' },
+  { name: 'notes', ddl: 'ALTER TABLE meal_logs ADD COLUMN notes TEXT' },
   { name: 'original_input', ddl: 'ALTER TABLE meal_logs ADD COLUMN original_input TEXT' },
   { name: 'analysis_details', ddl: "ALTER TABLE meal_logs ADD COLUMN analysis_details TEXT DEFAULT '{}'" },
   { name: 'fiber', ddl: "ALTER TABLE meal_logs ADD COLUMN fiber REAL DEFAULT 0" },
   { name: 'sugar', ddl: "ALTER TABLE meal_logs ADD COLUMN sugar REAL DEFAULT 0" },
-  { name: 'sodium', ddl: "ALTER TABLE meal_logs ADD COLUMN sodium REAL DEFAULT 0" }
+  { name: 'sodium', ddl: "ALTER TABLE meal_logs ADD COLUMN sodium REAL DEFAULT 0" },
+  { name: 'logged_on', ddl: 'ALTER TABLE meal_logs ADD COLUMN logged_on TEXT' }
 ];
 
 try {
@@ -184,21 +205,55 @@ export function toLocalDateString(date) {
 }
 
 
+// ========== PASSWORD RESET TOKENS TABLE ==========
+db.exec(`
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    expires_at DATETIME NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
+  CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
+`);
+
 // ========== USER MANAGEMENT ==========
 
+// bcrypt only ever reads the first 72 bytes of a password. Truncate inputs to
+// that so hashing (signup) and verification (login) always agree, while the
+// route-level validation still rejects absurdly long passwords as a DoS guard.
+const BCRYPT_SALT_ROUNDS = 10;
+const BCRYPT_MAX_PASSWORD_BYTES = 72;
+
+function truncatePassword(password) {
+  return Buffer.from(password, 'utf8').subarray(0, BCRYPT_MAX_PASSWORD_BYTES).toString('utf8');
+}
+
 /**
- * Hash password using SHA-256
+ * Hash a password with bcrypt - a slow, salted algorithm suitable for storing
+ * credentials. Replaces the previous plain SHA-256 hash.
  */
-function hashPassword(password) {
-  return crypto.createHash('sha256').update(password).digest('hex');
+export async function hashPassword(password) {
+  return bcrypt.hash(truncatePassword(password), BCRYPT_SALT_ROUNDS);
+}
+
+/**
+ * Compare a plaintext password against a stored bcrypt hash.
+ */
+export async function comparePassword(password, storedHash) {
+  return bcrypt.compare(truncatePassword(password), storedHash);
 }
 
 /**
  * Create a new user
  */
-export function createUser(username, email, password) {
+export async function createUser(username, email, password) {
   try {
-    const passwordHash = hashPassword(password);
+    const passwordHash = await hashPassword(password);
     const stmt = db.prepare(`
       INSERT INTO users (username, email, password_hash)
       VALUES (?, ?, ?)
@@ -216,18 +271,53 @@ export function createUser(username, email, password) {
 }
 
 /**
- * Authenticate user
+ * Authenticate user.
+ *
+ * Supports two hash formats so existing accounts keep working:
+ * - bcrypt hashes (prefix `$2`) created after this upgrade
+ * - legacy SHA-256 hashes (64 hex chars) from before the upgrade; a successful
+ *   legacy login transparently re-hashes the password with bcrypt so the user
+ *   never has to reset it.
  */
-export function authenticateUser(identifier, password) {
+export async function authenticateUser(identifier, password) {
   const normalizedIdentifier = String(identifier || '').trim();
-  const passwordHash = hashPassword(password);
 
   const stmt = db.prepare(`
-    SELECT id, username, email FROM users
-    WHERE (username = ? OR email = ?) AND password_hash = ?
+    SELECT id, username, email, password_hash FROM users
+    WHERE (username = ? OR email = ?)
   `);
 
-  return stmt.get(normalizedIdentifier, normalizedIdentifier.toLowerCase(), passwordHash);
+  const user = stmt.get(normalizedIdentifier, normalizedIdentifier.toLowerCase());
+  if (!user) return null;
+
+  let valid = false;
+  const storedHash = user.password_hash;
+
+  if (typeof storedHash === 'string' && storedHash.startsWith('$2')) {
+    // Current algorithm: bcrypt.
+    valid = await comparePassword(password, storedHash);
+  } else if (typeof storedHash === 'string' && /^[0-9a-f]{64}$/.test(storedHash)) {
+    // Legacy algorithm: SHA-256. Verify, then transparently re-hash with bcrypt.
+    const legacyHash = crypto.createHash('sha256').update(password).digest('hex');
+    valid = crypto.timingSafeEqual(
+      Buffer.from(legacyHash, 'hex'),
+      Buffer.from(storedHash, 'hex')
+    );
+    if (valid) {
+      try {
+        const newHash = await hashPassword(password);
+        db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, user.id);
+        console.log(`🔐 Transparently re-hashed legacy password for user ${user.id} with bcrypt.`);
+      } catch (rehashError) {
+        console.error(`Transparent re-hash failed for user ${user.id}:`, rehashError.message);
+      }
+    }
+  }
+
+  if (!valid) return null;
+
+  const { password_hash: _omitted, ...userWithoutHash } = user;
+  return userWithoutHash;
 }
 
 /**
@@ -253,6 +343,152 @@ export function emailExists(email) {
   `);
   const result = stmt.get(email);
   return result.count > 0;
+}
+
+/**
+ * Get a user's stored password hash by ID (for password verification without
+ * exposing the hash in the normal user response).
+ */
+export function getUserPasswordHash(userId) {
+  const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId);
+  return row?.password_hash || null;
+}
+
+/**
+ * Change a user's password. Verifies the current password first, then replaces
+ * it with a new bcrypt hash.
+ */
+export async function changeUserPassword(userId, currentPassword, newPassword) {
+  const user = getUserById(userId);
+  if (!user) throw new Error('User not found.');
+
+  // We need the stored hash to verify the current password. getUserById omits
+  // password_hash, so fetch it directly.
+  const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId);
+  if (!row) throw new Error('User not found.');
+
+  const valid = await comparePassword(currentPassword, row.password_hash);
+  if (!valid) throw new Error('Current password is incorrect.');
+
+  const newHash = await hashPassword(newPassword);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, userId);
+  return { success: true };
+}
+
+/**
+ * Create a password reset token for a user (forgot password flow).
+ * Returns the plain token so it can be delivered (e.g. by email).
+ * In this app the token is returned to the caller; in production it should be
+ * sent via email and never exposed in an API response to an unauthenticated user.
+ */
+export async function createPasswordResetToken(email) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const row = db.prepare('SELECT id FROM users WHERE email = ?').get(normalizedEmail);
+  if (!row) {
+    // Do not reveal whether the email exists. Return a generic success marker.
+    return { emailExists: false, token: null };
+  }
+
+  // Invalidate any existing unused tokens for this user.
+  db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE user_id = ? AND used = 0').run(row.id);
+
+  const token = crypto.randomBytes(32).toString('base64url');
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
+
+  db.prepare(`
+    INSERT INTO password_reset_tokens (user_id, token, expires_at)
+    VALUES (?, ?, ?)
+  `).run(row.id, token, expiresAt);
+
+  return { emailExists: true, token };
+}
+
+/**
+ * Verify a password reset token is valid and not expired/used.
+ * Returns the user id if valid, null otherwise.
+ */
+export function verifyPasswordResetToken(token) {
+  const row = db.prepare(`
+    SELECT prt.user_id, prt.expires_at, prt.used, u.id as userId
+    FROM password_reset_tokens prt
+    JOIN users u ON u.id = prt.user_id
+    WHERE prt.token = ? AND prt.used = 0
+  `).get(token);
+
+  if (!row) return null;
+  if (new Date(row.expires_at) <= new Date()) return null;
+  return row.userId;
+}
+
+/**
+ * Reset a user's password using a valid reset token. Marks the token as used.
+ */
+export async function resetPasswordWithToken(token, newPassword) {
+  const userId = verifyPasswordResetToken(token);
+  if (!userId) throw new Error('Invalid or expired reset token.');
+
+  const newHash = await hashPassword(newPassword);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, userId);
+  db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE token = ?').run(token);
+  return { success: true };
+}
+
+/**
+ * Delete a user account and all associated data (cascades via foreign keys).
+ */
+export function deleteUserAccount(userId) {
+  const user = getUserById(userId);
+  if (!user) throw new Error('User not found.');
+
+  // Invalidate any pending reset tokens for this user.
+  db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE user_id = ? AND used = 0').run(userId);
+
+  // Delete the user (cascades to profiles, goals, meal logs, etc. via ON DELETE CASCADE).
+  db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+  return { success: true };
+}
+
+/**
+ * Gather all of a user's data for export (CSV / PDF / download).
+ */
+export function exportUserData(userId) {
+  const user = getUserById(userId);
+  if (!user) throw new Error('User not found.');
+
+  const profile = getUserProfile(userId) || null;
+  const goals = getNutritionGoals(userId) || null;
+  const mealLogs = getMealLogsForExport(userId);
+  const weightLogs = getWeightLogs(userId, 10000);
+  const waterLogs = getWaterLogs(userId, null, null, 10000);
+  const exerciseLogs = getExerciseLogs(userId, null, null);
+  const sleepLogs = getSleepLogs(userId, null, null);
+
+  return {
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      created_at: user.created_at
+    },
+    profile,
+    goals,
+    mealLogs,
+    weightLogs,
+    waterLogs,
+    exerciseLogs,
+    sleepLogs,
+    exportedAt: new Date().toISOString()
+  };
+}
+
+/**
+ * Get all meal logs for a user (full detail including detected items etc.)
+ * for export purposes.
+ */
+export function getMealLogsForExport(userId) {
+  return db.prepare(`
+    SELECT * FROM meal_logs WHERE user_id = ? ORDER BY created_at DESC
+  `).all(userId);
 }
 
 // ========== NUTRITION GOALS ==========
@@ -662,7 +898,8 @@ export function getFrequentMeals(userId, startDate, endDate, limit = 5) {
 // only expose it on the single-log endpoint that feeds the details modal.
 const MEAL_LOG_SUMMARY_COLUMNS = `
   id, meal_type, category, meal_name, calories, protein, carbs, fats, fiber, sugar, sodium,
-  efficiency_score, advice, goal_alignment_reason, detected_items, analysis_details, created_at
+  efficiency_score, advice, notes, goal_alignment_reason, detected_items, portion_sizes,
+  image_url, image_metadata, analysis_details, logged_on, created_at
 `;
 
 /**
@@ -699,12 +936,20 @@ function formatMealLogSummary(row) {
     detected_items,
     analysis_details,
     created_at: createdAt,
+    logged_on,
+    portion_sizes,
+    image_url,
+    image_metadata,
     ...rest
   } = row;
 
   return {
     ...rest,
     detectedItems: parseDetectedItems(detected_items),
+    portionSizes: parseDetectedItems(portion_sizes),
+    imageUrl: image_url || null,
+    imageMetadata: parseAnalysisDetails(image_metadata),
+    loggedOn: logged_on || null,
     analysisDetails: parseAnalysisDetails(analysis_details),
     created_at: createdAt
   };
@@ -730,10 +975,10 @@ export function saveMealLog(mealData, userId) {
   const stmt = db.prepare(`
     INSERT INTO meal_logs (
       user_id, meal_type, category, meal_name, calories, protein, carbs, fats, fiber, sugar, sodium,
-      efficiency_score, advice, detected_items, goal_alignment_reason, image_base64, original_input,
-      analysis_details
+      efficiency_score, advice, notes, detected_items, portion_sizes, goal_alignment_reason,
+      image_base64, image_url, image_metadata, original_input, logged_on, analysis_details
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const info = stmt.run(
@@ -750,10 +995,15 @@ export function saveMealLog(mealData, userId) {
     mealData.sodium || 0,
     mealData.efficiencyScore || 'Medium',
     mealData.advice || '',
+    mealData.notes || null,
     JSON.stringify(mealData.detectedItems || []),
+    JSON.stringify(mealData.portionSizes || []),
     mealData.goalAlignmentReason || '',
     mealData.imageBase64 || null,
+    mealData.imageUrl || null,
+    mealData.imageMetadata ? JSON.stringify(mealData.imageMetadata) : null,
     mealData.originalInput || null,
+    mealData.loggedOn || null,
     JSON.stringify(mealData.analysisDetails || {})
   );
 

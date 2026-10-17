@@ -692,45 +692,190 @@
           </section>
         </section><!-- /view-insights -->
 
-        <!-- ========== VIEW: ACCOUNTS ========== -->
+        <!-- ========== VIEW: ACCOUNTS (PROFILE SETTINGS) ========== -->
         <section id="view-accounts" class="view hidden">
-          <div class="card settings-panel">
-            <div class="settings-profile-panel">
+          <div class="settings-container">
+
+            <!-- Profile Section -->
+            <div class="card settings-panel">
+              <div class="settings-profile-panel">
+                <div class="settings-profile-head">
+                  <h4><i class="fa-solid fa-user"></i> Your Profile</h4>
+                  <button type="button" id="editProfileBtn" class="btn-secondary">
+                    <i class="fa-solid fa-pen"></i> Edit &amp; Recalculate
+                  </button>
+                </div>
+                <div id="profileSummary" class="profile-summary">Loading your profile...</div>
+              </div>
+
+              <div class="settings-divider">
+                <span><i class="fa-solid fa-bullseye"></i> Nutrition Targets</span>
+              </div>
+
+              <form id="goalsForm" class="settings-form">
+                <div class="form-group">
+                  <label for="targetCalories">Daily Calorie Target</label>
+                  <input type="number" id="targetCalories" min="500" max="10000" step="50" value="2000">
+                </div>
+                <div class="form-group">
+                  <label for="targetProtein">Daily Protein (g)</label>
+                  <input type="number" id="targetProtein" min="0" max="500" step="1" value="150">
+                </div>
+                <div class="form-group">
+                  <label for="targetCarbs">Daily Carbs (g)</label>
+                  <input type="number" id="targetCarbs" min="0" max="500" step="1" value="250">
+                </div>
+                <div class="form-group">
+                  <label for="targetFats">Daily Fats (g)</label>
+                  <input type="number" id="targetFats" min="0" max="500" step="1" value="65">
+                </div>
+                <button type="submit" class="btn-primary">Save Goals</button>
+                <div id="goalsMessage" class="message"></div>
+              </form>
+            </div>
+
+            <!-- Change Password Section -->
+            <div class="card settings-panel">
               <div class="settings-profile-head">
-                <h4><i class="fa-solid fa-user"></i> Your Profile</h4>
-                <button type="button" id="editProfileBtn" class="btn-secondary">
-                  <i class="fa-solid fa-pen"></i> Edit &amp; Recalculate
+                <h4><i class="fa-solid fa-key"></i> Change Password</h4>
+              </div>
+              <form id="changePasswordForm" class="settings-form">
+                <div class="form-group">
+                  <label for="cpCurrentPassword">Current Password</label>
+                  <input type="password" id="cpCurrentPassword" placeholder="Current password" maxlength="128" required>
+                </div>
+                <div class="form-group">
+                  <label for="cpNewPassword">New Password</label>
+                  <input type="password" id="cpNewPassword" placeholder="New password (min 8 chars, letter + number)" minlength="8" maxlength="128" required>
+                </div>
+                <div class="form-group">
+                  <label for="cpConfirmPassword">Confirm New Password</label>
+                  <input type="password" id="cpConfirmPassword" placeholder="Confirm new password" maxlength="128" required>
+                </div>
+                <button type="submit" class="btn-primary">Change Password</button>
+                <div id="changePasswordMessage" class="message"></div>
+              </form>
+            </div>
+
+            <!-- Forgot Password Section -->
+            <div class="card settings-panel">
+              <div class="settings-profile-head">
+                <h4><i class="fa-solid fa-envelope"></i> Forgot Password</h4>
+              </div>
+              <form id="forgotPasswordForm" class="settings-form">
+                <div class="form-group">
+                  <label for="fpEmail">Email Address</label>
+                  <input type="email" id="fpEmail" placeholder="Enter your email" maxlength="254" required>
+                </div>
+                <button type="submit" class="btn-secondary">Send Reset Link</button>
+                <p class="form-hint">A password reset token will be generated. In development, the token is returned so you can test the reset flow.</p>
+                <div id="forgotPasswordMessage" class="message"></div>
+              </form>
+            </div>
+
+            <!-- Data Export Section -->
+            <div class="card settings-panel">
+              <div class="settings-profile-head">
+                <h4><i class="fa-solid fa-download"></i> Export Your Data</h4>
+              </div>
+              <p class="export-description">Download your complete nutrition history, profile, goals, and tracking data.</p>
+              <div class="export-actions">
+                <button type="button" id="exportCsvBtn" class="btn-secondary">
+                  <i class="fa-solid fa-file-csv"></i> Download CSV
+                </button>
+                <button type="button" id="exportPdfBtn" class="btn-secondary">
+                  <i class="fa-solid fa-file-pdf"></i> Download PDF
                 </button>
               </div>
-              <div id="profileSummary" class="profile-summary">Loading your profile...</div>
+              <div id="exportMessage" class="message"></div>
             </div>
 
-            <div class="settings-divider">
-              <span><i class="fa-solid fa-bullseye"></i> Nutrition Targets</span>
+            <!-- Delete Account Section -->
+            <div class="card settings-panel danger-zone">
+              <div class="settings-profile-head">
+                <h4><i class="fa-solid fa-trash"></i> Delete Account</h4>
+              </div>
+              <p class="danger-description">Deleting your account will permanently remove your profile, goals, and all tracked data (meals, weight, water, exercise, sleep). This cannot be undone.</p>
+              <form id="deleteAccountForm" class="settings-form">
+                <div class="form-group">
+                  <label for="daPassword">Confirm Password</label>
+                  <input type="password" id="daPassword" placeholder="Enter your password to confirm" maxlength="128" required>
+                </div>
+                <button type="submit" class="btn-danger">Delete My Account</button>
+                <div id="deleteAccountMessage" class="message"></div>
+              </form>
             </div>
 
-            <form id="goalsForm" class="settings-form">
-              <div class="form-group">
-                <label for="targetCalories">Daily Calorie Target</label>
-                <input type="number" id="targetCalories" min="500" max="10000" step="50" value="2000">
-              </div>
-              <div class="form-group">
-                <label for="targetProtein">Daily Protein (g)</label>
-                <input type="number" id="targetProtein" min="0" max="500" step="1" value="150">
-              </div>
-              <div class="form-group">
-                <label for="targetCarbs">Daily Carbs (g)</label>
-                <input type="number" id="targetCarbs" min="0" max="500" step="1" value="250">
-              </div>
-              <div class="form-group">
-                <label for="targetFats">Daily Fats (g)</label>
-                <input type="number" id="targetFats" min="0" max="500" step="1" value="65">
-              </div>
-              <button type="submit" class="btn-primary">Save Goals</button>
-              <div id="goalsMessage" class="message"></div>
-            </form>
           </div>
         </section><!-- /view-accounts -->
+
+        <!-- FORGOT PASSWORD MODAL -->
+        <div class="modal-overlay hidden" id="forgotPasswordModalOverlay">
+          <div class="card modal-panel auth-modal" role="dialog" aria-modal="true" aria-labelledby="forgotPasswordModalTitle">
+            <div class="modal-header">
+              <h3 id="forgotPasswordModalTitle"><i class="fa-solid fa-envelope"></i> Password Reset</h3>
+              <button type="button" id="closeForgotPasswordModalBtn" class="btn-close" aria-label="Close">
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+            <form id="forgotPasswordModalForm" class="settings-form">
+              <div class="form-group">
+                <label for="modalFpEmail">Email Address</label>
+                <input type="email" id="modalFpEmail" placeholder="Enter your email" maxlength="254" required>
+              </div>
+              <button type="submit" class="btn-primary">Send Reset Token</button>
+              <div id="modalForgotPasswordMessage" class="message"></div>
+            </form>
+            <div class="modal-footer">
+              <button type="button" id="closeForgotPasswordModalBtn2" class="btn-ghost">Close</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- RESET PASSWORD MODAL -->
+        <div class="modal-overlay hidden" id="resetPasswordModalOverlay">
+          <div class="card modal-panel auth-modal" role="dialog" aria-modal="true" aria-labelledby="resetPasswordModalTitle">
+            <div class="modal-header">
+              <h3 id="resetPasswordModalTitle"><i class="fa-solid fa-key"></i> Reset Password</h3>
+              <button type="button" id="closeResetPasswordModalBtn" class="btn-close" aria-label="Close">
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+            <form id="resetPasswordModalForm" class="settings-form">
+              <input type="hidden" id="modalResetToken">
+              <div class="form-group">
+                <label for="modalRpNewPassword">New Password</label>
+                <input type="password" id="modalRpNewPassword" placeholder="New password (min 8 chars)" minlength="8" maxlength="128" required>
+              </div>
+              <div class="form-group">
+                <label for="modalRpConfirmPassword">Confirm New Password</label>
+                <input type="password" id="modalRpConfirmPassword" placeholder="Confirm new password" maxlength="128" required>
+              </div>
+              <button type="submit" class="btn-primary">Reset Password</button>
+              <div id="modalResetPasswordMessage" class="message"></div>
+            </form>
+            <div class="modal-footer">
+              <button type="button" id="closeResetPasswordModalBtn2" class="btn-ghost">Cancel</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- DELETE ACCOUNT CONFIRMATION MODAL -->
+        <div class="modal-overlay hidden" id="deleteAccountConfirmOverlay">
+          <div class="card modal-panel confirm-panel" role="dialog" aria-modal="true" aria-labelledby="deleteAccountConfirmTitle">
+            <div class="modal-header">
+              <h3 id="deleteAccountConfirmTitle"><i class="fa-solid fa-triangle-exclamation"></i> Delete Account</h3>
+              <button type="button" id="closeDeleteAccountConfirmBtn" class="btn-close" aria-label="Cancel">
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+            <p id="deleteAccountConfirmText">Are you sure you want to delete your account? All your data will be permanently erased and cannot be recovered.</p>
+            <div class="confirm-actions">
+              <button type="button" id="cancelDeleteAccountConfirmBtn" class="btn-ghost">Cancel</button>
+              <button type="button" id="acceptDeleteAccountConfirmBtn" class="btn-danger">Delete Account</button>
+            </div>
+          </div>
+        </div>
 
         <!-- ========== VIEW: WEIGHT PROGRESS ========== -->
         <section id="view-weight" class="view hidden">
@@ -766,6 +911,8 @@
             </form>
             <p class="insight-note" id="waterStatus">No water logged today.</p>
             <p class="message" id="waterMessage"></p>
+            <p class="message" id="waterHistoryStatus"></p>
+            <ul id="waterHistoryList" class="detail-items health-history-list" aria-label="Water logs for the last seven days"></ul>
           </section>
 
           <section class="card insight-panel" style="margin-top: var(--space-4);">
@@ -780,8 +927,9 @@
                 <button type="submit" class="btn-save-edit"><i class="fa-solid fa-plus"></i> Log exercise</button>
               </div>
             </form>
+            <p class="insight-note" id="exerciseStatus">Loading recent activity...</p>
             <p class="message" id="exerciseMessage"></p>
-            <ul id="exerciseList" class="detail-items"></ul>
+            <ul id="exerciseList" class="detail-items health-history-list" aria-label="Exercise logs for the last seven days"></ul>
           </section>
 
           <section class="card insight-panel" style="margin-top: var(--space-4);">
@@ -797,6 +945,8 @@
             </form>
             <p class="insight-note" id="sleepStatus">No sleep logged.</p>
             <p class="message" id="sleepMessage"></p>
+            <p class="message" id="sleepHistoryStatus"></p>
+            <ul id="sleepHistoryList" class="detail-items health-history-list" aria-label="Sleep logs for the last seven days"></ul>
           </section>
         </section><!-- /view-health -->
 
