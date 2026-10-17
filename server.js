@@ -53,15 +53,12 @@ if (isProduction && configuredOrigins.some(origin => !/^https:\/\//i.test(origin
   throw new Error('Production CORS_ORIGIN entries must be exact HTTPS origins; wildcards are not allowed.');
 }
 
-const allowedOrigins = (configuredOrigins.length ? configuredOrigins : [
+const allowedOrigins = configuredOrigins.length ? configuredOrigins : [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   'http://localhost:5500',
   'http://127.0.0.1:5500'
-].join(','))
-  .split(',')
-  .map(origin => origin.trim())
-  .filter(Boolean);
+];
 
 app.set('trust proxy', ['true', '1'].includes((process.env.TRUST_PROXY || '').toLowerCase()) ? 1 : false);
 
