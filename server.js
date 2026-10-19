@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import crypto from 'node:crypto';
+import nodemailer from 'nodemailer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
@@ -9,7 +11,10 @@ import {
   saveMealLog, getDailyLogs, getDailyTotals, deleteMealLog, deleteAllLogs, getMonthlyHistory,
   getMealLogById, updateMealLog,
   getFilteredLogs, getFilteredTotals, formatMealLogDetail,
-  createUser, authenticateUser, getUserById, emailExists, emailExists as checkEmailExists,
+  createUser, createUserWithPasswordHash, hashPassword, authenticateUser, getUserById,
+  emailExists, emailExists as checkEmailExists, usernameExists,
+  getPendingSignup, savePendingSignup, pendingSignupUsernameExists,
+  incrementPendingSignupAttempts, deletePendingSignup, cleanupExpiredPendingSignups,
   getNutritionGoals, updateNutritionGoals, createNutritionGoals,
   getUserProfile, upsertUserProfile,
   getWeightLogs, saveWeightLog, deleteWeightLog,
@@ -23,7 +28,7 @@ import {
 import { 
   validateMealInput, validateNutritionGoals, validateAuthInput, validateProfileInput,
   validateMealEdit, validateWeightInput, validateWaterInput, verifyToken, errorHandler,
-  loginRateLimit, signupRateLimit,
+  loginRateLimit, signupRateLimit, verifyEmailRateLimit, resendVerificationRateLimit,
   validateChangePasswordInput, validateForgotPasswordInput, validateResetPasswordInput,
   changePasswordRateLimit, forgotPasswordRateLimit, resetPasswordRateLimit,
   deleteAccountRateLimit, exportRateLimit
@@ -45,6 +50,91 @@ if (!authSecret || Buffer.byteLength(authSecret) < 32) {
   throw new Error('Set JWT_SECRET (or AUTH_SECRET) to a random secret of at least 32 bytes.');
 }
 
+const smtpPort = Number(process.env.SMTP_PORT) || 587;
+const smtpHost = process.env.SMTP_HOST?.trim();
+const smtpUser = process.env.SMTP_USER?.trim();
+const smtpPassword = process.env.SMTP_PASSWORD?.trim();
+function missingSmtpVariables() {
+  return [
+    !smtpHost && 'SMTP_HOST',
+    !smtpUser && 'SMTP_USER',
+    !smtpPassword && 'SMTP_PASSWORD'
+  ].filter(Boolean);
+}
+
+const missingSmtpConfig = missingSmtpVariables();
+const verificationMailer = missingSmtpConfig.length === 0
+  ? nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: process.env.SMTP_SECURE === 'true' || smtpPort === 465,
+      auth: { user: smtpUser, pass: smtpPassword },
+      pool: true,
+      maxConnections: 3,
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000
+    })
+  : null;
+const verificationMailFrom = process.env.SMTP_FROM?.trim() || smtpUser;
+console.info(`[Email] SMTP configuration: ${missingSmtpConfig.length ? `missing ${missingSmtpConfig.join(', ')}` : 'required variables present'}; sender ${process.env.SMTP_FROM?.trim() ? 'provided' : 'falls back to SMTP_USER'}.`);
+
+if (verificationMailer) {
+  verificationMailer.verify((err) => {
+    if (err) {
+      console.warn(`[Email] SMTP connection warning: ${err.message}. If emails fail, verify SMTP credentials or local network access.`);
+    } else {
+      console.info('[Email] SMTP Transporter connected and verified ready to send emails.');
+    }
+  });
+}
+
+const EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
+const EMAIL_CODE_RESEND_COOLDOWN_MS = 60 * 1000;
+const EMAIL_CODE_MAX_ATTEMPTS = 5;
+
+function hashEmailVerificationCode(email, code) {
+  return crypto.createHmac('sha256', authSecret).update(`${email}:${code}`).digest('hex');
+}
+
+function emailVerificationCodeMatches(email, code, storedHash) {
+  const expected = Buffer.from(hashEmailVerificationCode(email, code), 'hex');
+  const actual = Buffer.from(storedHash || '', 'hex');
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+async function sendEmailVerificationCode(email, code) {
+  if (!verificationMailer || !verificationMailFrom) {
+    throw new Error('Email verification is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM.');
+  }
+
+  await verificationMailer.sendMail({
+    from: verificationMailFrom,
+    to: email,
+    subject: 'Your NutriAI Tracker verification code',
+    text: `Your NutriAI Tracker verification code is: ${code}\n\nThis code will expire in 10 minutes.\n\nIf you did not request this verification code, please ignore this email.`,
+    html: `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your NutriAI Verification Code</title>
+</head>
+<body style="margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0f172a; color: #f8fafc;">
+  <div style="max-width: 480px; margin: 0 auto; background-color: #1e293b; border-radius: 12px; padding: 32px; border: 1px solid #334155; text-align: center; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);">
+    <h1 style="color: #ff8a5c; margin-top: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">NutriAI Tracker</h1>
+    <p style="color: #cbd5e1; font-size: 15px; margin: 16px 0 24px;">Welcome! Please enter this 6-digit verification code to complete your signup:</p>
+    <div style="background-color: #0f172a; border: 2px dashed #ff8a5c; border-radius: 10px; padding: 18px 24px; margin: 20px 0; display: inline-block;">
+      <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #38bdf8; font-family: monospace;">${code}</span>
+    </div>
+    <p style="color: #94a3b8; font-size: 14px; margin: 20px 0 0;">This code expires in <strong>10 minutes</strong>.</p>
+    <p style="color: #64748b; font-size: 12px; margin: 28px 0 0; border-top: 1px solid #334155; padding-top: 16px;">If you did not request this email, no action is needed.</p>
+  </div>
+</body>
+</html>`
+  });
+}
+
 const configuredOrigins = (process.env.CORS_ORIGIN || '').split(',').map(origin => origin.trim()).filter(Boolean);
 if (isProduction && configuredOrigins.length === 0) {
   throw new Error('Set CORS_ORIGIN to the comma-separated HTTPS origins allowed to access this app in production.');
@@ -53,12 +143,19 @@ if (isProduction && configuredOrigins.some(origin => !/^https:\/\//i.test(origin
   throw new Error('Production CORS_ORIGIN entries must be exact HTTPS origins; wildcards are not allowed.');
 }
 
-const allowedOrigins = configuredOrigins.length ? configuredOrigins : [
+const defaultOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3001',
   'http://localhost:5500',
   'http://127.0.0.1:5500'
 ];
+if (process.env.PORT) {
+  defaultOrigins.push(`http://localhost:${process.env.PORT}`);
+  defaultOrigins.push(`http://127.0.0.1:${process.env.PORT}`);
+}
+const allowedOrigins = configuredOrigins.length ? configuredOrigins : [...new Set(defaultOrigins)];
 
 app.set('trust proxy', ['true', '1'].includes((process.env.TRUST_PROXY || '').toLowerCase()) ? 1 : false);
 
@@ -616,40 +713,198 @@ function resolveInsightsRange(daysInput) {
 
 // ========== AUTHENTICATION ENDPOINTS ==========
 
-/**
- * POST /api/auth/signup
- * Create a new user account
- */
+/** Begin signup by emailing a short-lived verification code. */
 app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    cleanupExpiredPendingSignups();
 
-    // Check if email already exists
+    if (!verificationMailer) {
+      if (isProduction) {
+        return res.status(503).json({
+          success: false,
+          error: `Email verification is not configured. Missing environment variable(s): ${missingSmtpConfig.join(', ')}.`
+        });
+      }
+      console.warn(`[DEV WARNING] SMTP not configured (missing ${missingSmtpConfig.join(', ')}). Proceeding with dev console codes.`);
+    }
+
+    const username = sanitizeInput(req.body.username).trim();
+    const email = req.body.email.trim().toLowerCase();
+
     if (checkEmailExists(email)) {
-      return res.status(409).json({
+      return res.status(409).json({ success: false, error: 'Email already registered. Please sign in instead.' });
+    }
+    if (usernameExists(username) || pendingSignupUsernameExists(username, email)) {
+      return res.status(409).json({ success: false, error: 'Username is already in use. Please choose another.' });
+    }
+
+    const existingPending = getPendingSignup(email);
+    if (existingPending && Date.now() - existingPending.created_at < EMAIL_CODE_RESEND_COOLDOWN_MS) {
+      return res.status(429).json({
         success: false,
-        error: 'Email already registered. Please use login instead.'
+        error: 'A verification code was just sent. Please check your email or wait a minute before requesting another.',
+        cooldownRemaining: Math.ceil((EMAIL_CODE_RESEND_COOLDOWN_MS - (Date.now() - existingPending.created_at)) / 1000)
       });
     }
 
-    // Create user (password is hashed with bcrypt inside db.js)
-    const userId = await createUser(sanitizeInput(username), email.toLowerCase(), password);
-    const token = generateToken(userId);
-    const user = getUserById(userId);
+    const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+    const passwordHash = await hashPassword(req.body.password);
 
-    res.status(201).json({
+    if (!isProduction) {
+      console.log(`\n========================================\n[SIGNUP VERIFICATION] Code for ${email}: ${code}\n========================================\n`);
+    }
+
+    let emailSent = false;
+    if (verificationMailer) {
+      try {
+        await sendEmailVerificationCode(email, code);
+        emailSent = true;
+      } catch (error) {
+        console.error('Signup Verification Email Error:', error.message);
+        if (isProduction) {
+          return res.status(503).json({ success: false, error: 'Could not send the verification email. Check the email address or try again later.' });
+        }
+        console.warn(`[DEV WARNING] Email sending failed (${error.message}). Continuing in dev mode using console verification code.`);
+      }
+    }
+
+    savePendingSignup({
+      username,
+      email,
+      passwordHash,
+      codeHash: hashEmailVerificationCode(email, code),
+      expiresAt: Date.now() + EMAIL_CODE_TTL_MS
+    });
+
+    res.status(202).json({
       success: true,
-      message: 'Account created successfully',
-      token,
-      user: formatUserResponse(user)
+      verificationRequired: true,
+      email,
+      message: emailSent
+        ? 'A six-digit verification code has been sent to your email. Be sure to check your Inbox and Spam/Junk folder.'
+        : 'A six-digit verification code has been generated. (Dev mode: check server console or devCode below).',
+      ...(!isProduction ? { devCode: code } : {})
     });
   } catch (error) {
     console.error('Signup Error:', error);
-    res.status(500).json({ 
+    const isConflict = String(error.code || '').startsWith('SQLITE_CONSTRAINT');
+    res.status(isConflict ? 409 : 500).json({
       success: false,
-      error: error.message || 'Failed to create account'
+      error: isConflict ? 'Username or email is already in use.' : 'Failed to start signup.'
     });
   }
+});
+
+/** Verify the email code and only then create an authenticated account. */
+app.post('/api/auth/verify-email', verifyEmailRateLimit, async (req, res) => {
+  cleanupExpiredPendingSignups();
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^\d{6}$/.test(code)) {
+    return res.status(400).json({ success: false, error: 'Enter a valid email and six-digit verification code.' });
+  }
+
+  const pending = getPendingSignup(email);
+  if (!pending) {
+    return res.status(400).json({ success: false, error: 'No pending signup was found. Start signup again to request a new code.' });
+  }
+  if (pending.expires_at <= Date.now()) {
+    deletePendingSignup(email);
+    return res.status(400).json({ success: false, error: 'That verification code expired. Request a new code.' });
+  }
+  if (pending.attempts >= EMAIL_CODE_MAX_ATTEMPTS) {
+    return res.status(429).json({ success: false, error: 'Too many incorrect codes. Request a new code and try again.' });
+  }
+  if (!emailVerificationCodeMatches(email, code, pending.code_hash)) {
+    incrementPendingSignupAttempts(email);
+    return res.status(400).json({
+      success: false,
+      error: `Incorrect verification code. ${EMAIL_CODE_MAX_ATTEMPTS - pending.attempts - 1} attempts remaining.`
+    });
+  }
+
+  if (checkEmailExists(email) || usernameExists(pending.username)) {
+    deletePendingSignup(email);
+    return res.status(409).json({ success: false, error: 'That email or username is already registered. Please sign in.' });
+  }
+
+  try {
+    const userId = createUserWithPasswordHash(pending.username, email, pending.password_hash);
+    deletePendingSignup(email);
+    const user = getUserById(userId);
+    res.status(201).json({
+      success: true,
+      message: 'Email verified and account created.',
+      token: generateToken(userId),
+      user: formatUserResponse(user)
+    });
+  } catch (error) {
+    console.error('Email Verification Account Creation Error:', error);
+    const isConflict = String(error.code || '').startsWith('SQLITE_CONSTRAINT');
+    if (isConflict) deletePendingSignup(email);
+    res.status(isConflict ? 409 : 500).json({
+      success: false,
+      error: isConflict ? 'That email or username is already registered. Please sign in.' : 'Could not create the account.'
+    });
+  }
+});
+
+/** Send a replacement code without revealing whether an email has a pending signup. */
+app.post('/api/auth/resend-verification', resendVerificationRateLimit, async (req, res) => {
+  cleanupExpiredPendingSignups();
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ success: false, error: 'Please provide a valid email address.' });
+  }
+  if (!verificationMailer && isProduction) {
+    return res.status(503).json({
+      success: false,
+      error: `Email verification is not configured. Missing environment variable(s): ${missingSmtpConfig.join(', ')}.`
+    });
+  }
+
+  const pending = getPendingSignup(email);
+  if (!pending) {
+    return res.json({ success: true, message: 'If a signup is pending, a new verification code will be sent.' });
+  }
+  if (Date.now() - pending.created_at < EMAIL_CODE_RESEND_COOLDOWN_MS) {
+    return res.status(429).json({ success: false, error: 'Please wait a minute before requesting another code.' });
+  }
+
+  const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+  if (!isProduction) {
+    console.log(`\n========================================\n[RESEND VERIFICATION] Code for ${email}: ${code}\n========================================\n`);
+  }
+
+  let emailSent = false;
+  if (verificationMailer) {
+    try {
+      await sendEmailVerificationCode(email, code);
+      emailSent = true;
+    } catch (error) {
+      console.error('Resend Verification Email Error:', error.message);
+      if (isProduction) {
+        return res.status(503).json({ success: false, error: 'Could not send the verification email. Try again later.' });
+      }
+      console.warn(`[DEV WARNING] Email sending failed (${error.message}). Continuing in dev mode using console verification code.`);
+    }
+  }
+
+  savePendingSignup({
+    username: pending.username,
+    email,
+    passwordHash: pending.password_hash,
+    codeHash: hashEmailVerificationCode(email, code),
+    expiresAt: Date.now() + EMAIL_CODE_TTL_MS
+  });
+
+  res.json({
+    success: true,
+    message: emailSent
+      ? 'A new verification code has been sent. Please check your Inbox and Spam/Junk folder.'
+      : 'A new verification code has been generated. (Dev mode: check server console or devCode below).',
+    ...(!isProduction ? { devCode: code } : {})
+  });
 });
 
 /**
@@ -895,7 +1150,9 @@ app.get('/api/export/csv', verifyToken, exportRateLimit, (req, res) => {
     lines.push('=== WEIGHT LOGS ===');
     lines.push('Date,Weight (kg)');
     for (const log of data.weightLogs || []) {
-      lines.push(`${log.logged_on},${log.weight_kg}`);
+      const date = log.loggedOn || log.logged_on || '';
+      const weight = log.weightKg ?? log.weight_kg ?? '';
+      lines.push(`${date},${weight}`);
     }
 
     // Water logs
@@ -903,7 +1160,10 @@ app.get('/api/export/csv', verifyToken, exportRateLimit, (req, res) => {
     lines.push('=== WATER LOGS ===');
     lines.push('Date,Intake (ml),Goal (ml)');
     for (const log of data.waterLogs || []) {
-      lines.push(`${log.logged_on},${log.intake_ml},${log.goal_ml}`);
+      const date = log.date || log.logged_on || '';
+      const intake = log.intakeMl ?? log.intake_ml ?? '';
+      const goal = log.goalMl ?? log.goal_ml ?? '';
+      lines.push(`${date},${intake},${goal}`);
     }
 
     // Exercise logs
@@ -911,7 +1171,11 @@ app.get('/api/export/csv', verifyToken, exportRateLimit, (req, res) => {
     lines.push('=== EXERCISE LOGS ===');
     lines.push('Date,Activity,Duration (min),Calories Burned');
     for (const log of data.exerciseLogs || []) {
-      lines.push(`${log.logged_on},"${String(log.activity).replace(/"/g, '""')}",${log.duration_min},${log.calories_burned}`);
+      const date = log.date || log.logged_on || '';
+      const activity = `"${String(log.activity || '').replace(/"/g, '""')}"`;
+      const duration = log.durationMin ?? log.duration_min ?? '';
+      const calories = log.caloriesBurned ?? log.calories_burned ?? '';
+      lines.push(`${date},${activity},${duration},${calories}`);
     }
 
     // Sleep logs
@@ -919,7 +1183,10 @@ app.get('/api/export/csv', verifyToken, exportRateLimit, (req, res) => {
     lines.push('=== SLEEP LOGS ===');
     lines.push('Date,Hours,Quality');
     for (const log of data.sleepLogs || []) {
-      lines.push(`${log.logged_on},${log.sleep_hours},${log.sleep_quality || ''}`);
+      const date = log.date || log.logged_on || '';
+      const hours = log.sleepHours ?? log.sleep_hours ?? '';
+      const quality = log.quality || log.sleep_quality || '';
+      lines.push(`${date},${hours},${quality}`);
     }
 
     const csv = lines.join('\n');

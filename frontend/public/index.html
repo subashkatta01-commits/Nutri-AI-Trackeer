@@ -52,6 +52,23 @@
           <p class="auth-toggle">Already have an account? <a href="#" id="toggleToLogin">Sign in</a></p>
           <div id="signupError" class="error-message"></div>
         </form>
+
+        <form id="verificationForm" class="auth-form hidden">
+          <h2>Verify your email</h2>
+          <p class="auth-toggle">Enter the six-digit code sent to <strong id="verificationEmail"></strong>.</p>
+          <div class="form-group">
+            <input type="text" id="verificationCode" placeholder="6-digit code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" aria-label="Email verification code" required>
+          </div>
+          <button type="submit" class="btn-primary" id="verifyEmailBtn">Verify &amp; Create Account</button>
+          <button type="button" class="btn-ghost" id="resendVerificationBtn">Resend code</button>
+          <p class="auth-toggle">
+            <a href="#" id="backToSignup">Back to signup</a> &bull; <a href="#" id="verificationToLogin">Sign in</a>
+          </p>
+          <p class="auth-tip" style="font-size: 0.8rem; color: #8892b0; margin-top: 10px; line-height: 1.4;">
+            <i class="fa-solid fa-circle-info"></i> Can't find it? Check your <strong>Spam / Junk</strong> folder.
+          </p>
+          <div id="verificationMessage" class="message" role="status" aria-live="polite"></div>
+        </form>
       </div>
     </div>
   </div>
@@ -1024,6 +1041,6 @@
   </div>
 
   <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
-  <script src="app.js?v=20261009-2"></script>
+  <script src="app.js?v=20261017-otp"></script>
 </body>
 </html>

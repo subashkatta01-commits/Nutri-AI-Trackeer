@@ -17,6 +17,16 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS pending_signups (
+    email TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS nutrition_goals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL UNIQUE,
@@ -181,6 +191,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_meal_logs_created_at ON meal_logs(created_at);
   CREATE INDEX IF NOT EXISTS idx_meal_logs_user_date ON meal_logs(user_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_signups_username_lower ON pending_signups(LOWER(username));
   CREATE INDEX IF NOT EXISTS idx_meal_logs_user_name ON meal_logs(user_id, meal_name);
   CREATE INDEX IF NOT EXISTS idx_weight_logs_user_date ON weight_logs(user_id, logged_on);
   CREATE INDEX IF NOT EXISTS idx_water_logs_user_date ON water_logs(user_id, logged_on);
@@ -254,6 +265,15 @@ export async function comparePassword(password, storedHash) {
 export async function createUser(username, email, password) {
   try {
     const passwordHash = await hashPassword(password);
+    return createUserWithPasswordHash(username, email, passwordHash);
+  } catch (error) {
+    throw new Error(`User creation failed: ${error.message}`);
+  }
+}
+
+/** Create a user from a previously hashed password and seed default goals atomically. */
+export function createUserWithPasswordHash(username, email, passwordHash) {
+  const createUserTransaction = db.transaction(() => {
     const stmt = db.prepare(`
       INSERT INTO users (username, email, password_hash)
       VALUES (?, ?, ?)
@@ -263,11 +283,49 @@ export async function createUser(username, email, password) {
     
     // Create default nutrition goals for new user
     createNutritionGoals(info.lastInsertRowid);
-    
     return info.lastInsertRowid;
-  } catch (error) {
-    throw new Error(`User creation failed: ${error.message}`);
-  }
+  });
+
+  return createUserTransaction(username, email, passwordHash);
+}
+
+export function cleanupExpiredPendingSignups() {
+  return db.prepare('DELETE FROM pending_signups WHERE expires_at <= ?').run(Date.now());
+}
+
+export function usernameExists(username) {
+  return Boolean(db.prepare('SELECT 1 FROM users WHERE username = ? COLLATE NOCASE').get(username));
+}
+
+export function pendingSignupUsernameExists(username, exceptEmail = '') {
+  cleanupExpiredPendingSignups();
+  return Boolean(db.prepare(`
+    SELECT 1 FROM pending_signups
+    WHERE username = ? COLLATE NOCASE AND email <> ? AND expires_at > ?
+  `).get(username, exceptEmail, Date.now()));
+}
+
+export function savePendingSignup({ username, email, passwordHash, codeHash, expiresAt, createdAt = Date.now() }) {
+  cleanupExpiredPendingSignups();
+  // Clear any existing pending record for this email or username to prevent index collisions
+  db.prepare('DELETE FROM pending_signups WHERE email = ? OR username = ? COLLATE NOCASE').run(email, username);
+  db.prepare(`
+    INSERT INTO pending_signups (email, username, password_hash, code_hash, expires_at, attempts, created_at)
+    VALUES (?, ?, ?, ?, ?, 0, ?)
+  `).run(email, username, passwordHash, codeHash, expiresAt, createdAt);
+}
+
+export function getPendingSignup(email) {
+  cleanupExpiredPendingSignups();
+  return db.prepare('SELECT * FROM pending_signups WHERE email = ? AND expires_at > ?').get(email, Date.now()) || null;
+}
+
+export function incrementPendingSignupAttempts(email) {
+  return db.prepare('UPDATE pending_signups SET attempts = attempts + 1 WHERE email = ?').run(email);
+}
+
+export function deletePendingSignup(email) {
+  return db.prepare('DELETE FROM pending_signups WHERE email = ?').run(email);
 }
 
 /**
@@ -715,13 +773,18 @@ export function getWaterLogForDate(userId, date) {
  * a day they drank nothing.
  */
 export function getWaterLogs(userId, startDate, endDate, limit = 31) {
+  const args = [userId];
+  let where = 'user_id = ?';
+  if (startDate) { where += ' AND logged_on >= ?'; args.push(startDate); }
+  if (endDate) { where += ' AND logged_on <= ?'; args.push(endDate); }
+  args.push(limit);
   return db.prepare(`
     SELECT id, intake_ml, goal_ml, logged_on
     FROM water_logs
-    WHERE user_id = ? AND logged_on BETWEEN ? AND ?
+    WHERE ${where}
     ORDER BY logged_on ASC
     LIMIT ?
-  `).all(userId, startDate, endDate, limit).map(formatWaterLog);
+  `).all(...args).map(formatWaterLog);
 }
 
 /**

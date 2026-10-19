@@ -8,9 +8,12 @@ let monthlyChartInstance = null;
 let currentBase64Image = null;
 let currentUser = null;
 let authToken = null;
+let pendingVerificationEmail = sessionStorage.getItem('pendingVerificationEmail') || '';
 let authListenersInitialized = false;
 let appListenersInitialized = false;
 let loginInProgress = false;
+let signupInProgress = false;
+let resendCooldownTimer = null;
 
 let currentGoals = { calories: 2000, protein: 150, carbs: 250, fats: 65 };
 let lastTotals = { totalCalories: 0, totalProtein: 0, totalCarbs: 0, totalFats: 0 };
@@ -137,6 +140,12 @@ function showAuthScreen() {
   document.getElementById('authScreen').classList.remove('hidden');
   document.getElementById('appScreen').classList.add('hidden');
   setupAuthListeners();
+  if (pendingVerificationEmail) {
+    document.getElementById('loginForm').classList.add('hidden');
+    document.getElementById('signupForm').classList.add('hidden');
+    document.getElementById('verificationEmail').textContent = pendingVerificationEmail;
+    document.getElementById('verificationForm').classList.remove('hidden');
+  }
 }
 
 function showApp() {
@@ -145,16 +154,91 @@ function showApp() {
   updateGreeting();
 }
 
+function setVerificationMessage(text, type = 'error') {
+  const el = document.getElementById('verificationMessage');
+  if (!el) return;
+  el.textContent = text || '';
+  if (!text) {
+    el.className = 'message hidden';
+    return;
+  }
+  if (type === 'success') {
+    el.className = 'message success';
+  } else if (type === 'info') {
+    el.className = 'message';
+  } else {
+    el.className = 'error-message';
+  }
+}
+
+function startResendCooldown(seconds = 60) {
+  const button = document.getElementById('resendVerificationBtn');
+  if (!button) return;
+  button.disabled = true;
+  let remaining = seconds;
+  button.textContent = `Resend code (${remaining}s)`;
+  if (resendCooldownTimer) clearInterval(resendCooldownTimer);
+  resendCooldownTimer = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) {
+      clearInterval(resendCooldownTimer);
+      resendCooldownTimer = null;
+      button.disabled = false;
+      button.textContent = 'Resend code';
+    } else {
+      button.textContent = `Resend code (${remaining}s)`;
+    }
+  }, 1000);
+}
+
+function stopResendCooldown() {
+  if (resendCooldownTimer) {
+    clearInterval(resendCooldownTimer);
+    resendCooldownTimer = null;
+  }
+  const button = document.getElementById('resendVerificationBtn');
+  if (button) {
+    button.disabled = false;
+    button.textContent = 'Resend code';
+  }
+}
+
 function setupAuthListeners() {
   if (authListenersInitialized) return;
 
   const loginForm = document.getElementById('loginForm');
   const signupForm = document.getElementById('signupForm');
+  const verificationForm = document.getElementById('verificationForm');
   const toggleToSignup = document.getElementById('toggleToSignup');
   const toggleToLogin = document.getElementById('toggleToLogin');
+  const resendVerificationBtn = document.getElementById('resendVerificationBtn');
+  const backToSignup = document.getElementById('backToSignup');
+  const verificationToLogin = document.getElementById('verificationToLogin');
 
   loginForm.addEventListener('submit', handleLogin);
   signupForm.addEventListener('submit', handleSignup);
+  verificationForm.addEventListener('submit', handleEmailVerification);
+  resendVerificationBtn.addEventListener('click', handleResendVerification);
+  backToSignup.addEventListener('click', (event) => {
+    event.preventDefault();
+    pendingVerificationEmail = '';
+    sessionStorage.removeItem('pendingVerificationEmail');
+    stopResendCooldown();
+    verificationForm.classList.add('hidden');
+    signupForm.classList.remove('hidden');
+    setVerificationMessage('');
+  });
+  if (verificationToLogin) {
+    verificationToLogin.addEventListener('click', (event) => {
+      event.preventDefault();
+      pendingVerificationEmail = '';
+      sessionStorage.removeItem('pendingVerificationEmail');
+      stopResendCooldown();
+      verificationForm.classList.add('hidden');
+      loginForm.classList.remove('hidden');
+      setVerificationMessage('');
+    });
+  }
   toggleToSignup.addEventListener('click', (e) => {
     e.preventDefault();
     loginForm.classList.add('hidden');
@@ -227,10 +311,21 @@ async function handleLogin(e) {
 
 async function handleSignup(e) {
   e.preventDefault();
-  const username = document.getElementById('signupUsername').value;
-  const email = document.getElementById('signupEmail').value;
+  if (signupInProgress) return;
+
+  const submitButton = document.querySelector('#signupForm button[type="submit"]');
+  const submitLabel = submitButton?.textContent;
+  const username = document.getElementById('signupUsername').value.trim();
+  const email = document.getElementById('signupEmail').value.trim();
   const password = document.getElementById('signupPassword').value;
   const errorDiv = document.getElementById('signupError');
+  errorDiv.textContent = '';
+
+  signupInProgress = true;
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = 'Sending verification code...';
+  }
 
   try {
     const response = await fetch('/api/auth/signup', {
@@ -243,6 +338,18 @@ async function handleSignup(e) {
 
     if (!response.ok) {
       errorDiv.textContent = data.error || 'Signup failed';
+      return;
+    }
+
+    if (data.verificationRequired) {
+      pendingVerificationEmail = data.email || email.toLowerCase();
+      sessionStorage.setItem('pendingVerificationEmail', pendingVerificationEmail);
+      document.getElementById('verificationEmail').textContent = pendingVerificationEmail;
+      document.getElementById('verificationCode').value = data.devCode || '';
+      setVerificationMessage(data.message || 'Check your email for the verification code.', 'success');
+      document.getElementById('signupForm').classList.add('hidden');
+      document.getElementById('verificationForm').classList.remove('hidden');
+      startResendCooldown(60);
       return;
     }
 
@@ -263,6 +370,95 @@ async function handleSignup(e) {
     errorDiv.textContent = '';
   } catch (error) {
     errorDiv.textContent = 'Network error: ' + error.message;
+  } finally {
+    signupInProgress = false;
+    if (submitButton) {
+      submitButton.disabled = false;
+      if (submitLabel !== undefined) submitButton.textContent = submitLabel;
+    }
+  }
+}
+
+async function handleEmailVerification(event) {
+  event.preventDefault();
+  const codeInput = document.getElementById('verificationCode');
+  const submitButton = document.getElementById('verifyEmailBtn');
+  const submitLabel = submitButton?.textContent;
+  const code = codeInput.value.trim();
+
+  if (!/^\d{6}$/.test(code)) {
+    setVerificationMessage('Enter the six-digit code from your email.', 'error');
+    return;
+  }
+
+  submitButton.disabled = true;
+  submitButton.textContent = 'Verifying code...';
+  setVerificationMessage('Verifying code...', 'info');
+
+  try {
+    const response = await fetch('/api/auth/verify-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: pendingVerificationEmail, code })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setVerificationMessage(data.error || 'Could not verify this code.', 'error');
+      return;
+    }
+
+    authToken = data.token;
+    currentUser = data.user;
+    localStorage.setItem('authToken', authToken);
+    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+    pendingVerificationEmail = '';
+    sessionStorage.removeItem('pendingVerificationEmail');
+    stopResendCooldown();
+    showApp();
+    setupEventListeners();
+    loadDailyData();
+    loadNutritionGoals();
+    setupAutoMealType();
+    await loadProfile();
+    openOnboarding(false);
+    setVerificationMessage('');
+  } catch (error) {
+    setVerificationMessage('Could not connect to the server: ' + error.message, 'error');
+  } finally {
+    submitButton.disabled = false;
+    if (submitLabel !== undefined) submitButton.textContent = submitLabel;
+  }
+}
+
+async function handleResendVerification() {
+  const button = document.getElementById('resendVerificationBtn');
+  if (!pendingVerificationEmail) {
+    setVerificationMessage('Start signup again to request a new verification code.', 'error');
+    return;
+  }
+
+  button.disabled = true;
+  setVerificationMessage('Requesting new code...', 'info');
+  try {
+    const response = await fetch('/api/auth/resend-verification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: pendingVerificationEmail })
+    });
+    const data = await response.json();
+    if (response.ok) {
+      setVerificationMessage(data.message || 'A new verification code has been sent.', 'success');
+      if (data.devCode) {
+        document.getElementById('verificationCode').value = data.devCode;
+      }
+      startResendCooldown(60);
+    } else {
+      setVerificationMessage(data.error || 'Could not resend the code.', 'error');
+      button.disabled = false;
+    }
+  } catch (error) {
+    setVerificationMessage('Could not connect to the server: ' + error.message, 'error');
+    button.disabled = false;
   }
 }
 

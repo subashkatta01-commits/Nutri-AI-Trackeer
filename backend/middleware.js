@@ -549,6 +549,8 @@ export function validateAuthInput(req, res, next) {
 }
 
 function createAuthRateLimiter({ limit, windowMs }) {
+  const isDev = process.env.NODE_ENV !== 'production';
+  const effectiveLimit = isDev ? Math.max(limit * 10, 50) : limit;
   const buckets = new Map();
   let requestsSinceCleanup = 0;
 
@@ -563,11 +565,11 @@ function createAuthRateLimiter({ limit, windowMs }) {
     }
 
     bucket.count += 1;
-    res.setHeader('RateLimit-Limit', limit);
-    res.setHeader('RateLimit-Remaining', Math.max(0, limit - bucket.count));
+    res.setHeader('RateLimit-Limit', effectiveLimit);
+    res.setHeader('RateLimit-Remaining', Math.max(0, effectiveLimit - bucket.count));
     res.setHeader('RateLimit-Reset', Math.ceil(bucket.resetAt / 1000));
 
-    if (bucket.count > limit) {
+    if (bucket.count > effectiveLimit) {
       const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
       res.setHeader('Retry-After', retryAfter);
       return res.status(429).json({ success: false, error: 'Too many attempts. Please try again later.' });
@@ -587,6 +589,8 @@ function createAuthRateLimiter({ limit, windowMs }) {
 
 export const loginRateLimit = createAuthRateLimiter({ limit: 10, windowMs: 15 * 60 * 1000 });
 export const signupRateLimit = createAuthRateLimiter({ limit: 5, windowMs: 60 * 60 * 1000 });
+export const verifyEmailRateLimit = createAuthRateLimiter({ limit: 10, windowMs: 15 * 60 * 1000 });
+export const resendVerificationRateLimit = createAuthRateLimiter({ limit: 5, windowMs: 15 * 60 * 1000 });
 
 // ========== AUTH RATE LIMITERS ==========
 
