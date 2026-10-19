@@ -157,11 +157,12 @@ if (process.env.PORT) {
 }
 const allowedOrigins = configuredOrigins.length ? configuredOrigins : [...new Set(defaultOrigins)];
 
-app.set('trust proxy', ['true', '1'].includes((process.env.TRUST_PROXY || '').toLowerCase()) ? 1 : false);
+app.set('trust proxy', isProduction || ['true', '1'].includes((process.env.TRUST_PROXY || '').toLowerCase()) ? 1 : false);
 
 // Middleware
 app.use((req, res, next) => {
-  if (isProduction && !req.secure) {
+  const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  if (isProduction && !isSecure) {
     return res.status(426).json({ success: false, error: 'HTTPS is required in production.' });
   }
   if (isProduction) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
