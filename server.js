@@ -720,13 +720,7 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
     cleanupExpiredPendingSignups();
 
     if (!verificationMailer) {
-      if (isProduction) {
-        return res.status(503).json({
-          success: false,
-          error: `Email verification is not configured. Missing environment variable(s): ${missingSmtpConfig.join(', ')}.`
-        });
-      }
-      console.warn(`[DEV WARNING] SMTP not configured (missing ${missingSmtpConfig.join(', ')}). Proceeding with dev console codes.`);
+      console.warn(`[WARNING] SMTP not configured (missing ${missingSmtpConfig.join(', ')}). Proceeding with fallback verification code.`);
     }
 
     const username = sanitizeInput(req.body.username).trim();
@@ -751,9 +745,7 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
     const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
     const passwordHash = await hashPassword(req.body.password);
 
-    if (!isProduction) {
-      console.log(`\n========================================\n[SIGNUP VERIFICATION] Code for ${email}: ${code}\n========================================\n`);
-    }
+    console.log(`\n========================================\n[SIGNUP VERIFICATION] Code for ${email}: ${code}\n========================================\n`);
 
     let emailSent = false;
     if (verificationMailer) {
@@ -762,10 +754,7 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
         emailSent = true;
       } catch (error) {
         console.error('Signup Verification Email Error:', error.message);
-        if (isProduction) {
-          return res.status(503).json({ success: false, error: 'Could not send the verification email. Check the email address or try again later.' });
-        }
-        console.warn(`[DEV WARNING] Email sending failed (${error.message}). Continuing in dev mode using console verification code.`);
+        console.warn(`[WARNING] Email sending failed (${error.message}). Continuing using fallback verification code.`);
       }
     }
 
@@ -783,8 +772,8 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
       email,
       message: emailSent
         ? 'A six-digit verification code has been sent to your email. Be sure to check your Inbox and Spam/Junk folder.'
-        : 'A six-digit verification code has been generated. (Dev mode: check server console or devCode below).',
-      ...(!isProduction ? { devCode: code } : {})
+        : 'A six-digit verification code has been generated. Check your Render server logs or enter the code below.',
+      devCode: code
     });
   } catch (error) {
     console.error('Signup Error:', error);
