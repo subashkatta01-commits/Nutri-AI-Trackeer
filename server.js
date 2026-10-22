@@ -726,13 +726,10 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
     cleanupExpiredPendingSignups();
 
     if (!verificationMailer) {
-      if (isProduction) {
-        return res.status(503).json({
-          success: false,
-          error: `Email verification is not configured. Missing environment variable(s): ${missingSmtpConfig.join(', ')}.`
-        });
-      }
-      console.warn(`[DEV WARNING] SMTP not configured (missing ${missingSmtpConfig.join(', ')}). Proceeding with dev console codes.`);
+      return res.status(503).json({
+        success: false,
+        error: `Email verification is not configured. Missing environment variable(s): ${missingSmtpConfig.join(', ')}.`
+      });
     }
 
     const username = sanitizeInput(req.body.username).trim();
@@ -757,18 +754,15 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
     const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
     const passwordHash = await hashPassword(req.body.password);
 
-    let emailSent = false;
-    if (verificationMailer) {
-      try {
-        await sendEmailVerificationCode(email, code);
-        emailSent = true;
-      } catch (error) {
-        console.error('Signup Verification Email Error:', error.message);
-        console.warn('[WARNING] Email sending failed (likely due to Gmail/SMTP cloud IP blocking/timeout). Falling back to console/log code.');
-      }
+    try {
+      await sendEmailVerificationCode(email, code);
+    } catch (error) {
+      console.error('Signup Verification Email Error:', error.message);
+      return res.status(503).json({
+        success: false,
+        error: 'Could not send the verification email. Please check your SMTP credentials or try again later.'
+      });
     }
-
-    console.log(`\n========================================\n[VERIFICATION CODE] Code for ${email}: ${code}\n========================================\n`);
 
     savePendingSignup({
       username,
@@ -782,10 +776,7 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
       success: true,
       verificationRequired: true,
       email,
-      message: emailSent
-        ? 'A six-digit verification code has been sent to your email. Be sure to check your Inbox and Spam/Junk folder.'
-        : 'Email sending timed out (Gmail blocks cloud IPs). Check your Render server logs for your verification code.',
-      devCode: code
+      message: 'A six-digit verification code has been sent to your email. Be sure to check your Inbox and Spam/Junk folder.'
     });
   } catch (error) {
     console.error('Signup Error:', error);
@@ -859,12 +850,10 @@ app.post('/api/auth/resend-verification', resendVerificationRateLimit, async (re
     return res.status(400).json({ success: false, error: 'Please provide a valid email address.' });
   }
   if (!verificationMailer) {
-    if (isProduction) {
-      return res.status(503).json({
-        success: false,
-        error: `Email verification is not configured. Missing environment variable(s): ${missingSmtpConfig.join(', ')}.`
-      });
-    }
+    return res.status(503).json({
+      success: false,
+      error: `Email verification is not configured. Missing environment variable(s): ${missingSmtpConfig.join(', ')}.`
+    });
   }
 
   const pending = getPendingSignup(email);
@@ -876,24 +865,13 @@ app.post('/api/auth/resend-verification', resendVerificationRateLimit, async (re
   }
 
   const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
-  if (!isProduction && !verificationMailer) {
-    console.log(`\n========================================\n[RESEND VERIFICATION] Code for ${email}: ${code}\n========================================\n`);
-  }
 
-  let emailSent = false;
-  if (verificationMailer) {
-    try {
-      await sendEmailVerificationCode(email, code);
-      emailSent = true;
-    } catch (error) {
-      console.error('Resend Verification Email Error:', error.message);
-      console.warn('[WARNING] Email resend failed (likely due to Gmail/SMTP cloud IP blocking/timeout). Falling back to console/log code.');
-    }
-  } else if (isProduction) {
-    return res.status(503).json({ success: false, error: 'Email verification is not configured.' });
+  try {
+    await sendEmailVerificationCode(email, code);
+  } catch (error) {
+    console.error('Resend Verification Email Error:', error.message);
+    return res.status(503).json({ success: false, error: 'Could not send the verification email. Try again later.' });
   }
-
-  console.log(`\n========================================\n[VERIFICATION CODE] Code for ${email}: ${code}\n========================================\n`);
 
   savePendingSignup({
     username: pending.username,
@@ -905,10 +883,7 @@ app.post('/api/auth/resend-verification', resendVerificationRateLimit, async (re
 
   res.json({
     success: true,
-    message: emailSent
-      ? 'A new verification code has been sent. Please check your Inbox and Spam/Junk folder.'
-      : 'Email sending timed out. Check your Render server logs for your verification code.',
-    devCode: code
+    message: 'A new verification code has been sent. Please check your Inbox and Spam/Junk folder.'
   });
 });
 
