@@ -720,7 +720,13 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
     cleanupExpiredPendingSignups();
 
     if (!verificationMailer) {
-      console.warn(`[WARNING] SMTP not configured (missing ${missingSmtpConfig.join(', ')}). Proceeding with fallback verification code.`);
+      if (isProduction) {
+        return res.status(503).json({
+          success: false,
+          error: `Email verification is not configured. Missing environment variable(s): ${missingSmtpConfig.join(', ')}.`
+        });
+      }
+      console.warn(`[DEV WARNING] SMTP not configured (missing ${missingSmtpConfig.join(', ')}). Proceeding with dev console codes.`);
     }
 
     const username = sanitizeInput(req.body.username).trim();
@@ -745,16 +751,19 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
     const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
     const passwordHash = await hashPassword(req.body.password);
 
-    console.log(`\n========================================\n[SIGNUP VERIFICATION] Code for ${email}: ${code}\n========================================\n`);
+    if (!isProduction && !verificationMailer) {
+      console.log(`\n========================================\n[SIGNUP VERIFICATION] Code for ${email}: ${code}\n========================================\n`);
+    }
 
-    let emailSent = false;
     if (verificationMailer) {
       try {
         await sendEmailVerificationCode(email, code);
-        emailSent = true;
       } catch (error) {
         console.error('Signup Verification Email Error:', error.message);
-        console.warn(`[WARNING] Email sending failed (${error.message}). Continuing using fallback verification code.`);
+        return res.status(503).json({
+          success: false,
+          error: 'Could not send the verification email. Please check your SMTP credentials or try again later.'
+        });
       }
     }
 
@@ -770,10 +779,8 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
       success: true,
       verificationRequired: true,
       email,
-      message: emailSent
-        ? 'A six-digit verification code has been sent to your email. Be sure to check your Inbox and Spam/Junk folder.'
-        : 'A six-digit verification code has been generated. Check your Render server logs or enter the code below.',
-      devCode: code
+      message: 'A six-digit verification code has been sent to your email. Be sure to check your Inbox and Spam/Junk folder.',
+      ...(!isProduction && !verificationMailer ? { devCode: code } : {})
     });
   } catch (error) {
     console.error('Signup Error:', error);
@@ -846,11 +853,13 @@ app.post('/api/auth/resend-verification', resendVerificationRateLimit, async (re
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return res.status(400).json({ success: false, error: 'Please provide a valid email address.' });
   }
-  if (!verificationMailer && isProduction) {
-    return res.status(503).json({
-      success: false,
-      error: `Email verification is not configured. Missing environment variable(s): ${missingSmtpConfig.join(', ')}.`
-    });
+  if (!verificationMailer) {
+    if (isProduction) {
+      return res.status(503).json({
+        success: false,
+        error: `Email verification is not configured. Missing environment variable(s): ${missingSmtpConfig.join(', ')}.`
+      });
+    }
   }
 
   const pending = getPendingSignup(email);
@@ -862,22 +871,19 @@ app.post('/api/auth/resend-verification', resendVerificationRateLimit, async (re
   }
 
   const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
-  if (!isProduction) {
+  if (!isProduction && !verificationMailer) {
     console.log(`\n========================================\n[RESEND VERIFICATION] Code for ${email}: ${code}\n========================================\n`);
   }
 
-  let emailSent = false;
   if (verificationMailer) {
     try {
       await sendEmailVerificationCode(email, code);
-      emailSent = true;
     } catch (error) {
       console.error('Resend Verification Email Error:', error.message);
-      if (isProduction) {
-        return res.status(503).json({ success: false, error: 'Could not send the verification email. Try again later.' });
-      }
-      console.warn(`[DEV WARNING] Email sending failed (${error.message}). Continuing in dev mode using console verification code.`);
+      return res.status(503).json({ success: false, error: 'Could not send the verification email. Try again later.' });
     }
+  } else if (isProduction) {
+    return res.status(503).json({ success: false, error: 'Email verification is not configured.' });
   }
 
   savePendingSignup({
@@ -890,10 +896,8 @@ app.post('/api/auth/resend-verification', resendVerificationRateLimit, async (re
 
   res.json({
     success: true,
-    message: emailSent
-      ? 'A new verification code has been sent. Please check your Inbox and Spam/Junk folder.'
-      : 'A new verification code has been generated. (Dev mode: check server console or devCode below).',
-    ...(!isProduction ? { devCode: code } : {})
+    message: 'A new verification code has been sent. Please check your Inbox and Spam/Junk folder.',
+    ...(!isProduction && !verificationMailer ? { devCode: code } : {})
   });
 });
 
