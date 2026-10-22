@@ -71,9 +71,9 @@ const verificationMailer = missingSmtpConfig.length === 0
       auth: { user: smtpUser, pass: smtpPassword },
       pool: true,
       maxConnections: 3,
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000
+      connectionTimeout: 3000,
+      greetingTimeout: 3000,
+      socketTimeout: 4000
     })
   : null;
 const verificationMailFrom = process.env.SMTP_FROM?.trim() || smtpUser;
@@ -108,7 +108,7 @@ async function sendEmailVerificationCode(email, code) {
     throw new Error('Email verification is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM.');
   }
 
-  await verificationMailer.sendMail({
+  const mailPromise = verificationMailer.sendMail({
     from: verificationMailFrom,
     to: email,
     subject: 'Your NutriAI Tracker verification code',
@@ -133,6 +133,12 @@ async function sendEmailVerificationCode(email, code) {
 </body>
 </html>`
   });
+
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('SMTP send timeout (fast-fail)')), 4000)
+  );
+
+  await Promise.race([mailPromise, timeoutPromise]);
 }
 
 const configuredOrigins = (process.env.CORS_ORIGIN || '').split(',').map(origin => origin.trim()).filter(Boolean);
