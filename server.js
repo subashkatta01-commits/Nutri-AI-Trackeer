@@ -725,13 +725,6 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
   try {
     cleanupExpiredPendingSignups();
 
-    if (!verificationMailer) {
-      return res.status(503).json({
-        success: false,
-        error: `Email verification is not configured. Missing environment variable(s): ${missingSmtpConfig.join(', ')}.`
-      });
-    }
-
     const username = sanitizeInput(req.body.username).trim();
     const email = req.body.email.trim().toLowerCase();
 
@@ -742,25 +735,41 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
       return res.status(409).json({ success: false, error: 'Username is already in use. Please choose another.' });
     }
 
+    const passwordHash = await hashPassword(req.body.password);
+    const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+
+    let emailSent = false;
+    if (verificationMailer) {
+      try {
+        await sendEmailVerificationCode(email, code);
+        emailSent = true;
+      } catch (error) {
+        console.error('Signup Verification Email Error:', error.message);
+        console.warn('[WARNING] Email sending failed. Falling back to direct account creation so user is not blocked.');
+      }
+    }
+
+    // If SMTP is not configured or email sending failed, create account directly
+    if (!verificationMailer || !emailSent) {
+      if (checkEmailExists(email) || usernameExists(username)) {
+        return res.status(409).json({ success: false, error: 'That email or username is already registered. Please sign in.' });
+      }
+      const userId = createUserWithPasswordHash(username, email, passwordHash);
+      const user = getUserById(userId);
+      return res.status(201).json({
+        success: true,
+        message: 'Account created successfully!',
+        token: generateToken(userId),
+        user: formatUserResponse(user)
+      });
+    }
+
     const existingPending = getPendingSignup(email);
     if (existingPending && Date.now() - existingPending.created_at < EMAIL_CODE_RESEND_COOLDOWN_MS) {
       return res.status(429).json({
         success: false,
         error: 'A verification code was just sent. Please check your email or wait a minute before requesting another.',
         cooldownRemaining: Math.ceil((EMAIL_CODE_RESEND_COOLDOWN_MS - (Date.now() - existingPending.created_at)) / 1000)
-      });
-    }
-
-    const code = crypto.randomInt(0, 1000000).toString().padStart(6, '0');
-    const passwordHash = await hashPassword(req.body.password);
-
-    try {
-      await sendEmailVerificationCode(email, code);
-    } catch (error) {
-      console.error('Signup Verification Email Error:', error.message);
-      return res.status(503).json({
-        success: false,
-        error: 'Could not send the verification email. Please check your SMTP credentials or try again later.'
       });
     }
 
