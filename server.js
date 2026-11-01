@@ -69,11 +69,9 @@ const verificationMailer = missingSmtpConfig.length === 0
       port: smtpPort,
       secure: process.env.SMTP_SECURE === 'true' || smtpPort === 465,
       auth: { user: smtpUser, pass: smtpPassword },
-      pool: true,
-      maxConnections: 3,
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 20000
     })
   : null;
 const verificationMailFrom = process.env.SMTP_FROM?.trim() || smtpUser;
@@ -101,6 +99,18 @@ function emailVerificationCodeMatches(email, code, storedHash) {
   const expected = Buffer.from(hashEmailVerificationCode(email, code), 'hex');
   const actual = Buffer.from(storedHash || '', 'hex');
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function formatSmtpError(error) {
+  const msg = error?.message || '';
+  const code = error?.code || '';
+  if (code === 'EAUTH' || /auth|invalid login|username and password not accepted|bad credentials/i.test(msg)) {
+    return 'SMTP Authentication failed. Please verify your SMTP_USER and SMTP_PASSWORD (ensure you are using a valid Google Account App Password with no spaces) in your .env file.';
+  }
+  if (code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || /timeout|connect/i.test(msg)) {
+    return 'SMTP connection timed out or was refused. Please check your internet connection, firewall, SMTP_HOST, and SMTP_PORT.';
+  }
+  return `Could not send verification email: ${msg || 'Unknown SMTP error'}. Please check your SMTP credentials in .env.`;
 }
 
 async function sendEmailVerificationCode(email, code) {
@@ -135,8 +145,12 @@ async function sendEmailVerificationCode(email, code) {
   });
 
   const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('SMTP send timeout (fast-fail)')), 15000)
+    setTimeout(() => reject(new Error('SMTP send timeout (fast-fail after 15s)')), 15000)
   );
+
+  mailPromise.catch((err) => {
+    console.error('[Email] Background mail send failure:', err?.message || err);
+  });
 
   await Promise.race([mailPromise, timeoutPromise]);
 }
@@ -757,10 +771,10 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
     try {
       await sendEmailVerificationCode(email, code);
     } catch (error) {
-      console.error('Signup Verification Email Error:', error.message);
+      console.error('Signup Verification Email Error:', error);
       return res.status(503).json({
         success: false,
-        error: 'Could not send the verification email. Please check your SMTP credentials or try again later.'
+        error: formatSmtpError(error)
       });
     }
 
@@ -869,8 +883,8 @@ app.post('/api/auth/resend-verification', resendVerificationRateLimit, async (re
   try {
     await sendEmailVerificationCode(email, code);
   } catch (error) {
-    console.error('Resend Verification Email Error:', error.message);
-    return res.status(503).json({ success: false, error: 'Could not send the verification email. Try again later.' });
+    console.error('Resend Verification Email Error:', error);
+    return res.status(503).json({ success: false, error: formatSmtpError(error) });
   }
 
   savePendingSignup({
