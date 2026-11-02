@@ -2,8 +2,10 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import crypto from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import nodemailer from 'nodemailer';
 import path from 'path';
+import * as tls from 'node:tls';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import { PDFDocument } from 'pdfkit';
@@ -54,6 +56,7 @@ const smtpPort = Number(process.env.SMTP_PORT) || 587;
 const smtpHost = process.env.SMTP_HOST?.trim();
 const smtpUser = process.env.SMTP_USER?.trim();
 const smtpPassword = process.env.SMTP_PASSWORD?.trim();
+const smtpTlsCaFile = process.env.SMTP_TLS_CA_FILE?.trim();
 function missingSmtpVariables() {
   return [
     !smtpHost && 'SMTP_HOST',
@@ -63,12 +66,22 @@ function missingSmtpVariables() {
 }
 
 const missingSmtpConfig = missingSmtpVariables();
+const defaultTlsCa = tls.getCACertificates?.('default') || tls.rootCertificates;
+const systemTlsCa = tls.getCACertificates?.('system') || [];
+const smtpTlsCa = smtpTlsCaFile || systemTlsCa.length
+  ? [
+      ...defaultTlsCa,
+      ...systemTlsCa,
+      ...(smtpTlsCaFile ? [readFileSync(path.resolve(__dirname, smtpTlsCaFile), 'utf8')] : [])
+    ]
+  : undefined;
 const verificationMailer = missingSmtpConfig.length === 0
   ? nodemailer.createTransport({
       host: smtpHost,
       port: smtpPort,
       secure: process.env.SMTP_SECURE === 'true' || smtpPort === 465,
       auth: { user: smtpUser, pass: smtpPassword },
+      tls: smtpTlsCa ? { ca: smtpTlsCa } : undefined,
       connectionTimeout: 15000,
       greetingTimeout: 15000,
       socketTimeout: 20000
@@ -107,6 +120,9 @@ function formatSmtpError(error) {
   if (code === 'EAUTH' || /auth|invalid login|username and password not accepted|bad credentials/i.test(msg)) {
     return 'SMTP Authentication failed. Please verify your SMTP_USER and SMTP_PASSWORD (ensure you are using a valid Google Account App Password with no spaces) in your .env file.';
   }
+  if (code === 'ESOCKET' && /self[- ]signed|certificate|unable to verify|unable to get local issuer/i.test(msg)) {
+    return 'SMTP TLS certificate validation failed. If your network or antivirus inspects encrypted email traffic, configure SMTP_TLS_CA_FILE with its trusted root CA certificate. Do not disable certificate validation.';
+  }
   if (code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || /timeout|connect/i.test(msg)) {
     return 'SMTP connection timed out or was refused. Please check your internet connection, firewall, SMTP_HOST, and SMTP_PORT.';
   }
@@ -118,7 +134,7 @@ async function sendEmailVerificationCode(email, code) {
     throw new Error('Email verification is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM.');
   }
 
-  const mailPromise = verificationMailer.sendMail({
+  await verificationMailer.sendMail({
     from: verificationMailFrom,
     to: email,
     subject: 'Your NutriAI Tracker verification code',
@@ -143,16 +159,6 @@ async function sendEmailVerificationCode(email, code) {
 </body>
 </html>`
   });
-
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('SMTP send timeout (fast-fail after 15s)')), 15000)
-  );
-
-  mailPromise.catch((err) => {
-    console.error('[Email] Background mail send failure:', err?.message || err);
-  });
-
-  await Promise.race([mailPromise, timeoutPromise]);
 }
 
 const configuredOrigins = (process.env.CORS_ORIGIN || '').split(',').map(origin => origin.trim()).filter(Boolean);
