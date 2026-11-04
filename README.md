@@ -43,26 +43,20 @@ vision-capable model enabled and `GROQ_MODEL` needs to point at one that is.
 
 See `.env.example` for the full list. `AUTH_SECRET` and the selected AI
 provider's API key are required to start; `PORT` and model names are optional.
-Signup email verification also requires the SMTP settings in `.env.example`; the
-server starts without them, but signup returns a configuration error until mail
-delivery is configured.
+Signup email verification also requires `BREVO_API_KEY` and `MAIL_FROM_EMAIL`;
+the server starts without them, but signup returns a configuration error until
+mail delivery is configured.
 
 `AUTH_SECRET` must be a random value of at least 32 bytes. Existing accounts
 using the previous SHA-256 password format are upgraded to bcrypt after their
 next successful login. Access tokens are signed HS256 tokens that expire
 after 12 hours, so users with older numeric tokens must sign in again.
 
-Signup sends a six-digit code that expires after 10 minutes. Configure an SMTP
-host, port, sender username/password, and sender address. For Gmail, use an App
-Password rather than your regular account password. Verification attempts and
-resends are rate-limited.
-
-If SMTP reports a TLS certificate-chain error, a local proxy or antivirus may be
-inspecting encrypted connections. On supported Node versions, the app includes
-trusted certificates from the operating system automatically. Otherwise, export
-the proxy's trusted root CA as a PEM file and set `SMTP_TLS_CA_FILE` to that
-file's path. Certificate validation stays enabled; do not disable it to work
-around this error.
+Signup sends a six-digit code that expires after 10 minutes. Email is sent
+through Brevo's HTTPS API, so configure `BREVO_API_KEY`, `MAIL_FROM_EMAIL` (a
+sender verified in Brevo), and optionally `MAIL_FROM_NAME`. Verification
+attempts and resends are rate-limited. Node.js 18 or newer is required for the
+built-in `fetch` used to call Brevo.
 
 Login is limited to 10 attempts per IP per 15 minutes and signup to 5 attempts
 per IP per hour. In production, set `CORS_ORIGIN` to exact HTTPS origins. The

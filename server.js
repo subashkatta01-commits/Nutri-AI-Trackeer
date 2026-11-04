@@ -2,13 +2,11 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import crypto from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import nodemailer from 'nodemailer';
 import path from 'path';
-import * as tls from 'node:tls';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import { PDFDocument } from 'pdfkit';
+import { sendMail } from './backend/mailer.js';
 import { 
   saveMealLog, getDailyLogs, getDailyTotals, deleteMealLog, deleteAllLogs, getMonthlyHistory,
   getMealLogById, updateMealLog,
@@ -52,53 +50,11 @@ if (!authSecret || Buffer.byteLength(authSecret) < 32) {
   throw new Error('Set JWT_SECRET (or AUTH_SECRET) to a random secret of at least 32 bytes.');
 }
 
-const smtpPort = Number(process.env.SMTP_PORT) || 587;
-const smtpHost = process.env.SMTP_HOST?.trim();
-const smtpUser = process.env.SMTP_USER?.trim();
-const smtpPassword = process.env.SMTP_PASSWORD?.trim();
-const smtpTlsCaFile = process.env.SMTP_TLS_CA_FILE?.trim();
-function missingSmtpVariables() {
-  return [
-    !smtpHost && 'SMTP_HOST',
-    !smtpUser && 'SMTP_USER',
-    !smtpPassword && 'SMTP_PASSWORD'
-  ].filter(Boolean);
-}
-
-const missingSmtpConfig = missingSmtpVariables();
-const defaultTlsCa = tls.getCACertificates?.('default') || tls.rootCertificates;
-const systemTlsCa = tls.getCACertificates?.('system') || [];
-const smtpTlsCa = smtpTlsCaFile || systemTlsCa.length
-  ? [
-      ...defaultTlsCa,
-      ...systemTlsCa,
-      ...(smtpTlsCaFile ? [readFileSync(path.resolve(__dirname, smtpTlsCaFile), 'utf8')] : [])
-    ]
-  : undefined;
-const verificationMailer = missingSmtpConfig.length === 0
-  ? nodemailer.createTransport({
-      host: smtpHost,
-      port: smtpPort,
-      secure: process.env.SMTP_SECURE === 'true' || smtpPort === 465,
-      auth: { user: smtpUser, pass: smtpPassword },
-      tls: smtpTlsCa ? { ca: smtpTlsCa } : undefined,
-      connectionTimeout: 15000,
-      greetingTimeout: 15000,
-      socketTimeout: 20000
-    })
-  : null;
-const verificationMailFrom = process.env.SMTP_FROM?.trim() || smtpUser;
-console.info(`[Email] SMTP configuration: ${missingSmtpConfig.length ? `missing ${missingSmtpConfig.join(', ')}` : 'required variables present'}; sender ${process.env.SMTP_FROM?.trim() ? 'provided' : 'falls back to SMTP_USER'}.`);
-
-if (verificationMailer) {
-  verificationMailer.verify((err) => {
-    if (err) {
-      console.warn(`[Email] SMTP connection warning: ${err.message}. If emails fail, verify SMTP credentials or local network access.`);
-    } else {
-      console.info('[Email] SMTP Transporter connected and verified ready to send emails.');
-    }
-  });
-}
+const missingBrevoConfig = [
+  !process.env.BREVO_API_KEY?.trim() && 'BREVO_API_KEY',
+  !process.env.MAIL_FROM_EMAIL?.trim() && 'MAIL_FROM_EMAIL'
+].filter(Boolean);
+console.info(`[Email] Brevo configuration: ${missingBrevoConfig.length ? `missing ${missingBrevoConfig.join(', ')}` : 'required variables present'}.`);
 
 const EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
 const EMAIL_CODE_RESEND_COOLDOWN_MS = 60 * 1000;
@@ -114,28 +70,25 @@ function emailVerificationCodeMatches(email, code, storedHash) {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
-function formatSmtpError(error) {
-  const msg = error?.message || '';
-  const code = error?.code || '';
-  if (code === 'EAUTH' || /auth|invalid login|username and password not accepted|bad credentials/i.test(msg)) {
-    return 'SMTP Authentication failed. Please verify your SMTP_USER and SMTP_PASSWORD (ensure you are using a valid Google Account App Password with no spaces) in your .env file.';
+function formatEmailError(error) {
+  if (!process.env.BREVO_API_KEY?.trim() || !process.env.MAIL_FROM_EMAIL?.trim()) {
+    return 'Email verification is not configured. Set BREVO_API_KEY and MAIL_FROM_EMAIL.';
   }
-  if (code === 'ESOCKET' && /self[- ]signed|certificate|unable to verify|unable to get local issuer/i.test(msg)) {
-    return 'SMTP TLS certificate validation failed. If your network or antivirus inspects encrypted email traffic, configure SMTP_TLS_CA_FILE with its trusted root CA certificate. Do not disable certificate validation.';
+  const status = error?.status;
+  if (status === 401 || status === 403) {
+    return 'Brevo rejected the API key. Check BREVO_API_KEY in your environment settings.';
   }
-  if (code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || /timeout|connect/i.test(msg)) {
-    return 'SMTP connection timed out or was refused. Please check your internet connection, firewall, SMTP_HOST, and SMTP_PORT.';
+  if (status === 400) {
+    return 'Brevo rejected the email request. Check that MAIL_FROM_EMAIL is a verified Brevo sender and that the recipient address is valid.';
   }
-  return `Could not send verification email: ${msg || 'Unknown SMTP error'}. Please check your SMTP credentials in .env.`;
+  if (status) {
+    return `Brevo could not send the verification email (HTTP ${status}). Please try again later.`;
+  }
+  return `Could not send verification email: ${error?.message || 'Unknown error'}. Check your Brevo configuration and network connection.`;
 }
 
 async function sendEmailVerificationCode(email, code) {
-  if (!verificationMailer || !verificationMailFrom) {
-    throw new Error('Email verification is not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM.');
-  }
-
-  await verificationMailer.sendMail({
-    from: verificationMailFrom,
+  await sendMail({
     to: email,
     subject: 'Your NutriAI Tracker verification code',
     text: `Your NutriAI Tracker verification code is: ${code}\n\nThis code will expire in 10 minutes.\n\nIf you did not request this verification code, please ignore this email.`,
@@ -745,10 +698,10 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
   try {
     cleanupExpiredPendingSignups();
 
-    if (!verificationMailer) {
+    if (missingBrevoConfig.length > 0) {
       return res.status(503).json({
         success: false,
-        error: `Email verification is not configured. Missing environment variable(s): ${missingSmtpConfig.join(', ')}.`
+        error: `Email verification is not configured. Missing environment variable(s): ${missingBrevoConfig.join(', ')}.`
       });
     }
 
@@ -780,7 +733,7 @@ app.post('/api/auth/signup', signupRateLimit, validateAuthInput, async (req, res
       console.error('Signup Verification Email Error:', error);
       return res.status(503).json({
         success: false,
-        error: formatSmtpError(error)
+        error: formatEmailError(error)
       });
     }
 
@@ -869,10 +822,10 @@ app.post('/api/auth/resend-verification', resendVerificationRateLimit, async (re
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return res.status(400).json({ success: false, error: 'Please provide a valid email address.' });
   }
-  if (!verificationMailer) {
+  if (missingBrevoConfig.length > 0) {
     return res.status(503).json({
       success: false,
-      error: `Email verification is not configured. Missing environment variable(s): ${missingSmtpConfig.join(', ')}.`
+      error: `Email verification is not configured. Missing environment variable(s): ${missingBrevoConfig.join(', ')}.`
     });
   }
 
@@ -890,7 +843,7 @@ app.post('/api/auth/resend-verification', resendVerificationRateLimit, async (re
     await sendEmailVerificationCode(email, code);
   } catch (error) {
     console.error('Resend Verification Email Error:', error);
-    return res.status(503).json({ success: false, error: formatSmtpError(error) });
+    return res.status(503).json({ success: false, error: formatEmailError(error) });
   }
 
   savePendingSignup({
