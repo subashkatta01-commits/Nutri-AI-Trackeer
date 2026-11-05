@@ -3,6 +3,17 @@
 An app that analyses the food you eat, reports its carbs, protein, fats and calories,
 and suggests what to add to your diet based on your selected fitness category.
 
+## Progress features
+
+The Insights view summarizes recurring macro gaps across logged weekdays and
+weekends. Weight Progress can show a 30-day linear-regression forecast with a
+95% prediction range after at least three check-ins spanning 14 days.
+
+The Nutrition Coach answers questions using a limited summary of the signed-in
+user's recent 30-day meals, nutrition targets, profile preferences, and recent
+weight check-ins. That summary is sent to the configured AI provider; the coach
+is for general nutrition information, not medical advice.
+
 ## Setup
 
 ```bash
@@ -19,8 +30,8 @@ of exact origins to use a different allowlist, for example
 
 ## AI provider
 
-Meal analysis is handled server-side by `POST /api/analyze-meal`. Two providers are
-supported, selected with the `AI_PROVIDER` env var (`groq` is the default):
+Meal analysis and the Nutrition Coach are handled server-side using the selected
+AI provider (`groq` is the default):
 
 | Provider | Env var | Key | Notes |
 | --- | --- | --- | --- |

@@ -3,23 +3,80 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart AI Diet & Macro Tracker</title>
+  <meta name="theme-color" content="#f7faf8">
+  <meta name="description" content="Build healthier habits with personalized nutrition tracking, meal insights, and progress tools.">
+  <title>NutriTrack — Find your feel-good balance</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="style.css?v=20261009">
+  <link rel="stylesheet" href="style.css?v=20261105-coach-2">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
-  <!-- AUTH SCREEN (shown initially) -->
+  <!-- Public landing page and sign-in experience -->
   <div id="authScreen" class="auth-screen">
-    <div class="auth-container">
+    <header class="landing-nav">
+      <a class="landing-brand" href="#" aria-label="NutriTrack home">
+        <span class="landing-brand-mark"><i class="fa-solid fa-leaf"></i></span>
+        <span>NutriTrack</span>
+      </a>
+      <button type="button" class="landing-login" data-open-auth>Log in <i class="fa-solid fa-arrow-right"></i></button>
+    </header>
+
+    <main id="welcomeLanding" class="landing-page">
+      <section class="landing-hero">
+        <div class="landing-copy">
+          <span class="eyebrow"><i class="fa-solid fa-sparkles"></i> YOUR HEALTHIER ROUTINE STARTS HERE</span>
+          <h1>A little more balance.<br><span>A lot more you.</span></h1>
+          <p class="landing-quote" id="landingQuote" aria-live="polite">“Take care of your body. It's the only place you have to live.”</p>
+          <p class="landing-tagline">Feel good about what you eat. Simple, thoughtful tracking that helps healthy habits stick.</p>
+          <button type="button" class="landing-cta" data-open-auth>Get started <i class="fa-solid fa-arrow-right"></i></button>
+          <div class="landing-trust"><span class="trust-avatars"><i class="fa-solid fa-user"></i><i class="fa-solid fa-user"></i><i class="fa-solid fa-user"></i></span><span>A gentler way to reach your goals</span></div>
+        </div>
+        <div class="landing-hero-art">
+          <img src="https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&w=1100&q=85" alt="Colorful fresh salad bowl with greens, vegetables, and grains">
+          <div class="hero-image-note"><span class="note-icon"><i class="fa-solid fa-seedling"></i></span><span><strong>Good food, good mood</strong><small>Make every bite count</small></span></div>
+          <span class="hero-sparkle sparkle-one"><i class="fa-solid fa-star"></i></span>
+          <span class="hero-sparkle sparkle-two"><i class="fa-solid fa-leaf"></i></span>
+        </div>
+      </section>
+
+      <section class="landing-gallery" aria-label="Fresh inspiration">
+        <div class="section-heading"><span class="eyebrow">A FRESH TAKE ON FOOD</span><h2>Make room for <span>feel-good food.</span></h2></div>
+        <div class="food-gallery">
+          <figure><img src="https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&w=700&q=80" alt="Fresh salad with colorful seasonal vegetables"><figcaption>Eat the rainbow</figcaption></figure>
+          <figure><img src="https://images.unsplash.com/photo-1490645935967-10de6ba17061?auto=format&fit=crop&w=700&q=80" alt="Balanced meal prep with vegetables and whole grains"><figcaption>Find your balance</figcaption></figure>
+          <figure><img src="https://images.unsplash.com/photo-1505252585461-04db1eb84625?auto=format&fit=crop&w=700&q=80" alt="Fresh smoothie topped with fruit and seeds"><figcaption>Little daily wins</figcaption></figure>
+          <figure><img src="https://images.unsplash.com/photo-1517673132405-a56a62b18caf?auto=format&fit=crop&w=700&q=80" alt="Nutritious breakfast bowl with fruit and oats"><figcaption>Start bright</figcaption></figure>
+          <figure><img src="https://images.unsplash.com/photo-1532550907401-a500c9a57435?auto=format&fit=crop&w=700&q=80" alt="Grilled chicken served with a fresh vegetable salad"><figcaption>Eat well, your way</figcaption></figure>
+        </div>
+      </section>
+
+      <section class="landing-features">
+        <div class="section-heading"><span class="eyebrow">SMALL STEPS, REAL PROGRESS</span><h2>Why <span>NutriTrack?</span></h2><p>Everything you need to build a healthier relationship with food.</p></div>
+        <div class="feature-grid">
+          <article class="feature-card"><span class="feature-icon"><i class="fa-solid fa-bowl-food"></i></span><h3>Track meals</h3><p>Keep your meals in one place and make mindful choices feel effortless.</p></article>
+          <article class="feature-card"><span class="feature-icon orange"><i class="fa-solid fa-chart-pie"></i></span><h3>Understand nutrition</h3><p>Get a clear picture of calories and macros without the guesswork.</p></article>
+          <article class="feature-card"><span class="feature-icon lavender"><i class="fa-solid fa-bullseye"></i></span><h3>Reach your goals</h3><p>See your progress, celebrate the little wins, and keep moving forward.</p></article>
+        </div>
+      </section>
+
+      <footer class="landing-footer"><a class="landing-brand" href="#"><span class="landing-brand-mark"><i class="fa-solid fa-leaf"></i></span><span>NutriTrack</span></a><span>Better habits, one bite at a time.</span></footer>
+    </main>
+
+    <div id="authPanel" class="auth-panel hidden">
+      <div class="auth-visual">
+        <button type="button" class="auth-back" id="authBackBtn"><i class="fa-solid fa-arrow-left"></i> Back to home</button>
+        <div class="auth-visual-copy"><span class="eyebrow">A FRESH START, EVERY DAY</span><h2>Make healthy<br>feel simple.</h2><p>Your next good choice starts here.</p></div>
+        <img src="https://images.unsplash.com/photo-1490645935967-10de6ba17061?auto=format&fit=crop&w=1000&q=85" alt="Healthy meal with vegetables, grains, and fresh ingredients">
+      </div>
+      <div class="auth-container">
       <div class="auth-card">
         <div class="auth-logo">
-          <i class="fa-solid fa-utensils"></i>
-          <h1>NutriAI Tracker</h1>
-          <p>AI-Powered Diet & Nutrition Tracking</p>
+          <i class="fa-solid fa-leaf"></i>
+          <h1>Welcome to NutriTrack</h1>
+          <p>Your feel-good nutrition companion</p>
         </div>
 
         <!-- Login Form -->
@@ -28,8 +85,9 @@
           <div class="form-group">
             <input type="text" id="loginUsername" placeholder="Username or email" maxlength="254" autocomplete="username" required>
           </div>
-          <div class="form-group">
+          <div class="form-group password-field">
             <input type="password" id="loginPassword" placeholder="Password" maxlength="128" autocomplete="current-password" required>
+            <button type="button" class="password-toggle" data-toggle-password="loginPassword" aria-label="Show password"><i class="fa-regular fa-eye"></i></button>
           </div>
           <button type="submit" class="btn-primary">Sign In</button>
           <p class="auth-toggle">Don't have an account? <a href="#" id="toggleToSignup">Sign up</a></p>
@@ -70,6 +128,8 @@
           <div id="verificationMessage" class="message" role="status" aria-live="polite"></div>
         </form>
       </div>
+      </div>
+    </div>
     </div>
   </div>
 
@@ -241,21 +301,25 @@
       <aside class="sidebar">
         <div class="logo">
           <i class="fa-solid fa-utensils"></i>
-          <span>NutriAI Tracker</span>
+          <span>NutriTrack</span>
         </div>
 
         <nav class="side-nav" aria-label="Primary">
           <button type="button" class="nav-item active" data-view="log">
             <i class="fa-solid fa-wand-magic-sparkles"></i>
-            <span>Analyze &amp; Log Meal</span>
+            <span>Log Meals</span>
           </button>
           <button type="button" class="nav-item" data-view="insights">
             <i class="fa-solid fa-chart-simple"></i>
             <span>Insights &amp; Progress</span>
           </button>
+          <button type="button" class="nav-item" data-view="coach">
+            <i class="fa-solid fa-comments"></i>
+            <span>Nutrition Coach</span>
+          </button>
           <button type="button" class="nav-item" data-view="accounts">
             <i class="fa-solid fa-user"></i>
-            <span>Accounts</span>
+            <span>My Profile</span>
           </button>
           <button type="button" class="nav-item" data-view="weight">
             <i class="fa-solid fa-weight-scale"></i>
@@ -707,7 +771,37 @@
             <ul class="timing-list" id="insMealTiming"></ul>
             <p class="insight-note" id="insTimingNote"></p>
           </section>
+
+          <section class="card insight-panel weekly-summary-panel">
+            <h3><i class="fa-solid fa-lightbulb"></i> Weekly insight summaries</h3>
+            <p class="insight-note">Patterns are based on your logged weekdays and weekends in this selected range.</p>
+            <ul class="weekly-insight-list" id="weeklyInsightList" aria-live="polite">
+              <li class="insight-note">Log meals on a few weekdays and weekends to find patterns.</li>
+            </ul>
+          </section>
         </section><!-- /view-insights -->
+
+        <!-- ========== VIEW: NUTRITION COACH ========== -->
+        <section id="view-coach" class="view hidden">
+          <section class="card insight-panel coach-panel">
+            <div class="insight-panel-head">
+              <div>
+                <h3><i class="fa-solid fa-comments"></i> Nutrition Coach</h3>
+                <p class="insight-note">Ask about your meals, nutrition targets, or recent progress. Replies use your recent logged data.</p>
+              </div>
+            </div>
+            <ol class="coach-messages" id="coachMessages" aria-live="polite" aria-label="Coach conversation">
+              <li class="coach-message coach-reply">Hi! I can help you understand patterns in your recent meal and weight logs.</li>
+            </ol>
+            <p class="message" id="coachStatus" role="status"></p>
+            <form class="coach-form" id="coachForm">
+              <label class="sr-only" for="coachInput">Ask the nutrition coach</label>
+              <textarea id="coachInput" rows="2" maxlength="1000" placeholder="e.g., How can I get closer to my protein target?" required></textarea>
+              <button type="button" class="btn-primary" id="coachSendBtn"><i class="fa-solid fa-paper-plane"></i> Ask</button>
+            </form>
+            <p class="coach-disclaimer">General nutrition information only—not medical advice. Only a summary of your recent logs is shared with the configured AI provider to answer your question.</p>
+          </section>
+        </section><!-- /view-coach -->
 
         <!-- ========== VIEW: ACCOUNTS (PROFILE SETTINGS) ========== -->
         <section id="view-accounts" class="view hidden">
@@ -910,6 +1004,7 @@
               <div id="weightChartEmpty" class="chart-empty">No weight check-ins yet</div>
             </div>
             <p class="insight-note" id="insWeightNote"></p>
+            <p class="weight-forecast hidden" id="weightForecast" aria-live="polite"></p>
             <p class="message" id="weightMessage"></p>
             <div class="weight-targets hidden" id="insWeightTargets">
               <span id="insWeightTargetsText"></span>
@@ -1041,6 +1136,6 @@
   </div>
 
   <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
-  <script src="app.js?v=20261017-otp"></script>
+  <script src="app.js?v=20261105-coach-2"></script>
 </body>
 </html>

@@ -14,6 +14,7 @@ let appListenersInitialized = false;
 let loginInProgress = false;
 let signupInProgress = false;
 let resendCooldownTimer = null;
+let quoteRotationTimer = null;
 
 let currentGoals = { calories: 2000, protein: 150, carbs: 250, fats: 65 };
 let lastTotals = { totalCalories: 0, totalProtein: 0, totalCarbs: 0, totalFats: 0 };
@@ -52,11 +53,12 @@ const GOAL_CATEGORY_MAP = {
 document.addEventListener('DOMContentLoaded', () => {
   applyStoredTheme();
   applyStoredSidebarMode();
+  setupLandingQuotes();
   checkAuthentication();
 });
 
 function applyStoredTheme() {
-  const theme = localStorage.getItem('theme') || 'dark';
+  const theme = localStorage.getItem('theme') || 'light';
   document.documentElement.setAttribute('data-theme', theme);
   updateThemeIcon(theme);
 }
@@ -141,16 +143,65 @@ function showAuthScreen() {
   document.getElementById('appScreen').classList.add('hidden');
   setupAuthListeners();
   if (pendingVerificationEmail) {
-    document.getElementById('loginForm').classList.add('hidden');
-    document.getElementById('signupForm').classList.add('hidden');
     document.getElementById('verificationEmail').textContent = pendingVerificationEmail;
-    document.getElementById('verificationForm').classList.remove('hidden');
+    openAuthPanel('verificationForm');
+  } else {
+    showLandingPage();
   }
 }
 
+function showLandingPage() {
+  document.getElementById('welcomeLanding').classList.remove('hidden');
+  document.getElementById('authPanel').classList.add('hidden');
+  if (quoteRotationTimer) return;
+  quoteRotationTimer = window.setInterval(rotateLandingQuote, 5000);
+}
+
+function openAuthPanel(formId = 'loginForm') {
+  document.getElementById('welcomeLanding').classList.add('hidden');
+  document.getElementById('authPanel').classList.remove('hidden');
+  ['loginForm', 'signupForm', 'verificationForm'].forEach((id) => {
+    document.getElementById(id).classList.toggle('hidden', id !== formId);
+  });
+  if (quoteRotationTimer) {
+    window.clearInterval(quoteRotationTimer);
+    quoteRotationTimer = null;
+  }
+  if (formId === 'loginForm') document.getElementById('loginUsername').focus();
+}
+
+const landingQuotes = [
+  "Take care of your body. It's the only place you have to live.",
+  "You don't have to eat less, you just have to eat right.",
+  'Small daily improvements lead to stunning results.',
+  'Let food be thy medicine and medicine be thy food.'
+];
+let landingQuoteIndex = 0;
+
+function setupLandingQuotes() {
+  const quote = document.getElementById('landingQuote');
+  if (quote) quote.textContent = `“${landingQuotes[0]}”`;
+}
+
+function rotateLandingQuote() {
+  const quote = document.getElementById('landingQuote');
+  if (!quote || document.getElementById('welcomeLanding').classList.contains('hidden')) return;
+  quote.classList.add('is-changing');
+  window.setTimeout(() => {
+    landingQuoteIndex = (landingQuoteIndex + 1) % landingQuotes.length;
+    quote.textContent = `“${landingQuotes[landingQuoteIndex]}”`;
+    quote.classList.remove('is-changing');
+  }, 280);
+}
+
 function showApp() {
+  if (quoteRotationTimer) {
+    window.clearInterval(quoteRotationTimer);
+    quoteRotationTimer = null;
+  }
   document.getElementById('authScreen').classList.add('hidden');
   document.getElementById('appScreen').classList.remove('hidden');
+  switchView('log');
   updateGreeting();
 }
 
@@ -215,6 +266,20 @@ function setupAuthListeners() {
   const backToSignup = document.getElementById('backToSignup');
   const verificationToLogin = document.getElementById('verificationToLogin');
 
+  document.querySelectorAll('[data-open-auth]').forEach((button) => {
+    button.addEventListener('click', () => openAuthPanel('loginForm'));
+  });
+  document.getElementById('authBackBtn').addEventListener('click', showLandingPage);
+  document.querySelectorAll('[data-toggle-password]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const input = document.getElementById(button.dataset.togglePassword);
+      const showing = input.type === 'password';
+      input.type = showing ? 'text' : 'password';
+      button.setAttribute('aria-label', showing ? 'Hide password' : 'Show password');
+      button.innerHTML = `<i class="fa-regular fa-eye${showing ? '-slash' : ''}"></i>`;
+    });
+  });
+
   loginForm.addEventListener('submit', handleLogin);
   signupForm.addEventListener('submit', handleSignup);
   verificationForm.addEventListener('submit', handleEmailVerification);
@@ -241,13 +306,11 @@ function setupAuthListeners() {
   }
   toggleToSignup.addEventListener('click', (e) => {
     e.preventDefault();
-    loginForm.classList.add('hidden');
-    signupForm.classList.remove('hidden');
+    openAuthPanel('signupForm');
   });
   toggleToLogin.addEventListener('click', (e) => {
     e.preventDefault();
-    signupForm.classList.add('hidden');
-    loginForm.classList.remove('hidden');
+    openAuthPanel('loginForm');
   });
   authListenersInitialized = true;
 }
@@ -867,7 +930,8 @@ function openSettingsModal() {
 }
 
 function closeSettingsModal() {
-  if (currentView === 'accounts') switchView('log');
+  const overlay = document.getElementById('settingsModalOverlay');
+  if (overlay) overlay.classList.add('hidden');
 }
 
 async function handleSaveGoals(e) {
@@ -1514,6 +1578,7 @@ function setupEventListeners() {
   document.querySelectorAll('.nav-item[data-view]').forEach((btn) => {
     btn.addEventListener('click', () => switchView(btn.dataset.view));
   });
+  setupCoachControls();
 
   // Monthly chart modal
   const monthlyChartBtn = document.getElementById('monthlyChartBtn');
@@ -2660,9 +2725,7 @@ function updateMacroChart(totals) {
       responsive: true,
       maintainAspectRatio: true,
       plugins: {
-        legend: {
-          labels: { color: '#eef1f8', font: { size: 12 } }
-        }
+        legend: { display: false }
       }
     }
   });
@@ -2916,8 +2979,34 @@ function renderInsights(insights) {
   renderStreaks(insights.streaks);
   renderMostCommonMeals(insights.mostCommonMeals);
   renderMealTiming(insights.mealTiming);
+  renderWeeklyInsightSummaries(insights.weeklyInsightSummaries || []);
   renderWeightProgress(insights.weight);
   renderWeeklyChart(insights.streaks.weeks);
+}
+
+function renderWeeklyInsightSummaries(summaries) {
+  const list = document.getElementById('weeklyInsightList');
+  if (!list) return;
+
+  list.replaceChildren();
+  if (summaries.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'insight-note';
+    empty.textContent = 'No consistent weekday or weekend nutrition gaps found in this range. Log meals regularly to build more useful patterns.';
+    list.append(empty);
+    return;
+  }
+
+  summaries.forEach((summary) => {
+    const item = document.createElement('li');
+    item.className = 'weekly-insight-item';
+    const title = document.createElement('strong');
+    title.textContent = summary.title;
+    const detail = document.createElement('span');
+    detail.textContent = summary.detail;
+    item.append(title, detail);
+    list.append(item);
+  });
 }
 
 // ---------- Weekly calorie average ----------
@@ -3116,6 +3205,7 @@ function weightStat(label, value, tone = '') {
 function renderWeightProgress(weight) {
   const stats = document.getElementById('insWeightStats');
   const note = document.getElementById('insWeightNote');
+  const forecast = document.getElementById('weightForecast');
   const targetsBox = document.getElementById('insWeightTargets');
   const targetsText = document.getElementById('insWeightTargetsText');
 
@@ -3124,6 +3214,10 @@ function renderWeightProgress(weight) {
       stats.innerHTML = `<span class="insight-note">No weight check-ins yet — log your first one to start the trend.</span>`;
     }
     if (note) note.textContent = '';
+    if (forecast) {
+      forecast.textContent = '';
+      forecast.classList.add('hidden');
+    }
     if (targetsBox) targetsBox.classList.add('hidden');
 
     // Returning users already have a weight on their profile, so start the
@@ -3156,6 +3250,21 @@ function renderWeightProgress(weight) {
     note.textContent = `${trendLabel} since ${formatShortDate(weight.firstDate)} over ${weight.entries} check-in${weight.entries === 1 ? '' : 's'}.${goalSuffix}`;
   }
 
+  if (forecast) {
+    const prediction = weight.forecast;
+    if (prediction) {
+      forecast.textContent =
+        `30-day regression forecast by ${formatShortDate(prediction.forecastDate)} ` +
+        `(${prediction.confidenceLevel}% prediction range): ${prediction.estimateKg} kg, ` +
+        `with a range of ${prediction.lowerKg}–${prediction.upperKg} kg. ` +
+        `Based on ${prediction.entries} check-ins; this is an estimate, not a guarantee.`;
+      forecast.classList.remove('hidden');
+    } else {
+      forecast.textContent = 'Log at least 3 weight check-ins spanning 14 days to get a regression forecast.';
+      forecast.classList.remove('hidden');
+    }
+  }
+
   // Offer the last known number so a daily check-in is a one-field edit.
   const weightInput = document.getElementById('weightInput');
   if (weightInput && !weightInput.value) weightInput.value = weight.latestWeight;
@@ -3172,6 +3281,94 @@ function renderWeightProgress(weight) {
   }
 
   renderWeightChart(weight.points);
+}
+
+let coachMessages = [];
+
+function setupCoachControls() {
+  const form = document.getElementById('coachForm');
+  const button = document.getElementById('coachSendBtn');
+  if (form) form.addEventListener('submit', handleCoachSubmit);
+  if (button) button.addEventListener('click', handleCoachSubmit);
+}
+
+function renderCoachMessages() {
+  const list = document.getElementById('coachMessages');
+  if (!list) return;
+
+  list.replaceChildren();
+  coachMessages.forEach((message) => {
+    const item = document.createElement('li');
+    item.className = `coach-message ${message.role === 'assistant' ? 'coach-reply' : 'coach-question'}`;
+    item.textContent = message.content;
+    list.append(item);
+  });
+  list.scrollTop = list.scrollHeight;
+}
+
+async function handleCoachSubmit(event) {
+  event.preventDefault();
+  const input = document.getElementById('coachInput');
+  const button = document.getElementById('coachSendBtn');
+  const status = document.getElementById('coachStatus');
+  if (window.location.protocol === 'file:') {
+    status.textContent = 'The coach needs the NutriTrack server. Start the app and open it at http://localhost:3000/ (or your configured port), then sign in there.';
+    status.className = 'message error';
+    return;
+  }
+
+  const content = input.value.trim();
+  if (!content) return;
+
+  coachMessages.push({ role: 'user', content });
+  input.value = '';
+  renderCoachMessages();
+  status.textContent = 'Thinking…';
+  status.className = 'message';
+  button.disabled = true;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 45000);
+
+  try {
+    const response = await fetch('/api/coach', {
+      signal: controller.signal,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify({ messages: coachMessages.slice(-10) })
+    });
+    const responseText = await response.text();
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch {
+      throw new Error(responseText.trim() || `The coach returned an unreadable response (${response.status}).`);
+    }
+
+    if (handleUnauthorized(response)) return;
+    if (!response.ok) {
+      status.textContent = data.error || 'The coach could not answer right now.';
+      status.className = 'message error';
+      return;
+    }
+
+    coachMessages.push({ role: 'assistant', content: data.reply });
+    coachMessages = coachMessages.slice(-10);
+    renderCoachMessages();
+    status.textContent = '';
+    status.className = 'message';
+  } catch (error) {
+    status.textContent = error.name === 'AbortError'
+      ? 'The coach request timed out. Check that the server and AI provider are available, then try again.'
+      : `Could not reach the coach: ${error.message}`;
+    status.className = 'message error';
+  } finally {
+    window.clearTimeout(timeoutId);
+    button.disabled = false;
+    input.focus();
+  }
 }
 
 function renderWeightChart(points) {

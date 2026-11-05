@@ -18,6 +18,7 @@ import {
   getNutritionGoals,
   getUserProfile
 } from './db.js';
+import { buildWeeklyInsightSummaries, buildWeightRegressionForecast } from './insightsMetrics.js';
 import { calculateTargets } from './nutritionCalculator.js';
 
 const MACROS = [
@@ -684,6 +685,7 @@ function buildWeightProgress(weightLogs, profile) {
       goal: profile.goal
     })
     : null;
+  const forecast = buildWeightRegressionForecast(points);
 
   return {
     hasEntries: true,
@@ -696,6 +698,7 @@ function buildWeightProgress(weightLogs, profile) {
     changePct: first.weight > 0 ? round((changeKg / first.weight) * 100, 1) : 0,
     weeklyRate,
     trend,
+    forecast,
     onTrack,
     goal,
     highestWeight: round(Math.max(...points.map((point) => point.weight)), 1),
@@ -756,6 +759,7 @@ export function getInsights(userId, { startDate, endDate }) {
     },
     targets,
     weeklyCalories: buildWeeklyCalories(daily, targets),
+    weeklyInsightSummaries: buildWeeklyInsightSummaries(daily.slice(-28), targets),
     macroConsistency: buildMacroConsistency(daily, targets),
     goalCompletion: buildGoalCompletion(daily, targets),
     streaks: buildStreaks(daily, targets),
