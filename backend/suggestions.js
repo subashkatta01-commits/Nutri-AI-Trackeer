@@ -20,6 +20,7 @@ import {
   getUserProfile,
   getWeightLogs
 } from './db.js';
+import { getMacroFoodSuggestion } from './suggestionSources.js';
 
 // A macro is only "short" by an amount worth acting on. Suggesting a 3g carb
 // top-up reads as noise.
@@ -42,28 +43,6 @@ const MACROS = [
   { key: 'carbs', label: 'Carbs', goalKey: 'daily_carbs_target', unit: 'g' },
   { key: 'fats', label: 'Fats', goalKey: 'daily_fats_target', unit: 'g' }
 ];
-
-/** Concrete, macro-aware fixes for a protein shortfall. */
-const PROTEIN_SOURCES = {
-  breakfast: 'Greek yogurt, eggs or a protein shake',
-  lunch: 'Grilled chicken, tuna or tofu with a legume side',
-  dinner: 'Salmon, lean beef or paneer with lentils',
-  snack: 'Cottage cheese, edamame or a handful of almonds'
-};
-
-const CARB_SOURCES = {
-  breakfast: 'whole-grain toast, oats or a banana',
-  lunch: 'brown rice, sweet potato or quinoa',
-  dinner: 'roasted vegetables, beans or a whole-wheat wrap',
-  snack: 'fruit, a handful of oats or a rice cake'
-};
-
-const FAT_SOURCES = {
-  breakfast: 'avocado, nuts or a drizzle of olive oil',
-  lunch: 'a drizzle of olive oil or a spoon of nuts',
-  dinner: 'olive oil, avocado or a handful of seeds',
-  snack: 'nuts, seeds or a small portion of dark chocolate'
-};
 
 // ============================================================
 // HELPERS
@@ -143,7 +122,7 @@ function buildMacroSuggestions(dailyRows, targets, days) {
         title: `${macro.label} is ${magnitude}${macro.unit} short on a typical day`,
         detail:
           `You average ${round(average)}${macro.unit} against a ${round(target)}${macro.unit} target over ` +
-          `${days} days. Add a ${macro.key}-forward option - try ${PROTEIN_SOURCES.dinner}.`,
+          `${days} days. Add a ${macro.key}-forward option - try ${getMacroFoodSuggestion(macro.key, 'dinner')}.`,
         metric: { label: macro.label, average: round(average), target: round(target), gap: -magnitude }
       });
     } else {
@@ -206,7 +185,7 @@ function buildRepetitionSuggestion(frequentMeals, days) {
     kind: 'repetition',
     icon: 'fa-rotate',
     tone: 'carbs',
-    title: `"${repeat.mealName}" appears in ${repeat.timesLogged} of the last ${days} days`,
+    title: `"${repeat.mealName}" was logged ${repeat.timesLogged} times in the last ${days} days`,
     detail:
       `It averages ${repeat.averageCalories} kcal and ${repeat.averageProtein}g protein. Rotating in one ` +
       'different meal would widen the nutrient range without dropping the calories you are used to.',
@@ -247,7 +226,6 @@ function buildNextMealPrompt(targets, macros) {
   if (!weakest) return null;
 
   const { macro } = weakest;
-  const sources = macro.key === 'protein' ? PROTEIN_SOURCES : CARB_SOURCES;
 
   return {
     id: 'next-meal-prompt',
@@ -257,7 +235,7 @@ function buildNextMealPrompt(targets, macros) {
     tone: 'protein',
     title: `Aim for ${weakest.macro.label.toLowerCase()} on your next meal`,
     detail:
-      `That is the biggest remaining gap today. A good pick: ${sources.lunch}. Log it and the dashboard ` +
+      `That is the biggest remaining gap today. A good pick: ${getMacroFoodSuggestion(macro.key, 'lunch')}. Log it and the dashboard ` +
       'updates against your targets.',
     metric: null
   };
